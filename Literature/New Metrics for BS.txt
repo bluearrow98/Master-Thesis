@@ -1,0 +1,5 @@
+1. Relative error 
+2. Recovery probability vs n
+3. Prediction error vs n
+4. Support size vs n
+5. ROC Curve (https://zitaoshen.rbind.io/project/machine_learning/how-to-plot-roc-curve-for-multiple-classes/)
