@@ -2,6 +2,7 @@ library("Rlab")
 library(MASS)
 library(Matrix)
 library(parallel)
+library(doParallel)
 
 stabSignal <- function(p){
   k = sample(c(1,2,3,4),size = 1)
@@ -43,60 +44,85 @@ standardize <- function(X){
 
 customBS <- function(X,y,k,polish = T){
   
+  n = dim(X)[1]
   p = dim(X)[2]
   
-  data = standardize(cbind(X,y))
-  X = data[,1:p]
-  y = data[,p+1]
-  
   # Discrete First order method
-  algo2time = system.time(algo2Sol <- proj_grad(X,y,k,polish = polish))
+  algo2time = system.time(algo2Sol <- algorithm2(X,y,k,polish = polish))
   
   M_p = algo2Sol$bm
   
   #MIO
-  Mu = 1.5*norm(as.matrix(M_p),type="i")
+  Mu = 2*norm(as.matrix(M_p),type="i")
   
   
   ## Initial guess (Not used for cold start)
   z0 = rep(0,p)
   z0[M_p!=0] = 1
-  x0 = c(M_p,1-z0,norm(as.matrix(M_p),type="i"))
   
   model = list()
   params = list()
-  
-  # Warm-start model creation (Eq 2.5)
-  model$A = spMatrix(nrow = 2, ncol = 2*p+ 1, i = c(rep(1,p),2),
-                     j = c(seq(p+1,2*p+1)),
-                     x = c(rep(1,p+1)))
-  # model$A = spMatrix(nrow = 2*p+1, ncol = 2*p,
-  #                    i= c(rep(seq(1,p),2),rep(seq(p+1,2*p),2),rep(2*p+1,p)),
-  #                    j=c(rep(seq(1,2*p),2),seq(p+1,2*p)),
-  #                    x=c(rep(-1,p),rep(-Mu,p),rep(1,p),rep(-Mu,p),rep(1,p)))
-  model$Q = spMatrix(nrow=2*p+1,ncol=2*p+1,i = c(rep(seq(1,p),each = p)),
-                     j = c(rep(seq(1,p),p)), x = c(0.5*t(X)%*%X))
-  model$obj = c(-t(X)%*%y,rep(0,p+1))
-  model$objcon = 0.5*t(y)%*%y
-  model$ub = c(rep(Mu,p),rep(1,p),Inf)
-  model$lb = c(rep(-Mu,p),rep(0,p),0)
-  model$rhs = c(p-k,Mu)
-  model$sense = c('>=','<=')
-  model$vtype = c(rep('C',p),rep('B',p),'C')
-  model$start = x0
-  model$genconnorm = list(list(resvar = 2*p + 1,
-                               vars = c(seq(1,p)),
-                               which = Inf))
-
-  ## Creating SOS constraints
-  sos = list()
-  for (j in 1:p){
-    sos[[j]] = list()
-    sos[[j]]$type = 1
-    sos[[j]]$index = c(j,p+j)
-    sos[[j]]$weights = c(1,2)
+  if (p < n) {
+    # Warm-start model creation (Eq 2.5)
+    model$A = spMatrix(nrow = 2, ncol = 2*p+ 1, i = c(rep(1,p),2),
+                       j = c(seq(p+1,2*p+1)),
+                       x = c(rep(1,p+1)))
+    # model$A = spMatrix(nrow = 2*p+1, ncol = 2*p,
+    #                    i= c(rep(seq(1,p),2),rep(seq(p+1,2*p),2),rep(2*p+1,p)),
+    #                    j=c(rep(seq(1,2*p),2),seq(p+1,2*p)),
+    #                    x=c(rep(-1,p),rep(-Mu,p),rep(1,p),rep(-Mu,p),rep(1,p)))
+    model$Q = spMatrix(nrow=2*p+1,ncol=2*p+1,i = c(rep(seq(1,p),each = p)),
+                       j = c(rep(seq(1,p),p)), x = c(0.5*t(X)%*%X))
+    model$obj = c(-t(X)%*%y,rep(0,p+1))
+    model$ub = c(rep(Mu,p),rep(1,p),Inf)
+    model$lb = c(rep(-Mu,p),rep(0,p),0)
+    model$rhs = c(p-k,Mu)
+    model$sense = c('>=','<=')
+    model$vtype = c(rep('C',p),rep('B',p),'C')
+    model$start = c(M_p,1-z0,norm(as.matrix(M_p),type="i"))
+    model$genconnorm = list(list(resvar = 2*p + 1,
+                                 vars = c(seq(1,p)),
+                                 which = Inf))
+    
+    ## Creating SOS constraints
+    sos = list()
+    for (j in 1:p){
+      sos[[j]] = list()
+      sos[[j]]$type = 1
+      sos[[j]]$index = c(j,p+j)
+      sos[[j]]$weights = c(1,2)
+    }
+    model$sos = sos
+    
+  }else{
+    # Warm-start model creation (Eq 2.6)
+    Mu_zeta = max(colSums(apply(abs(X),1,sort,decreasing=TRUE)[,1:k]))*Mu
+    model$A = spMatrix(nrow = n + 1, ncol = n + 2*p,
+                       i = c(seq(1,n),rep(seq(1,n),each = p),rep(n+1,p)),
+                       j = c(seq(1,n),rep(seq(n+1,n+p),n),seq(n+ p + 1,n + 2*p)),
+                       x = c(rep(1,n),c(-t(X)),rep(1,p)))
+    model$Q = spMatrix(nrow = n + 2*p, ncol = n + 2*p,
+                       i = seq(1,n),j = seq(1,n),x=rep(0.5,n))
+    model$obj = c(rep(0,n),-t(X)%*%y,rep(0,p))
+    model$ub = c(rep(Mu_zeta,n),rep(Mu,p),rep(1,p))
+    model$lb = c(rep(-Mu_zeta,n),rep(-Mu,p),rep(0,p))
+    model$rhs = c(rep(0,n),p-k)
+    model$sense = c(rep('=',n),'>=')
+    model$vtype = c(rep('C',n),rep('C',p),rep('B',p))
+    model$start = c(X%*%M_p,M_p, 1-z0)
+    
+    
+    ## Creating SOS constraints
+    sos = list()
+    for (j in 1:p){
+      sos[[j]] = list()
+      sos[[j]]$type = 1
+      sos[[j]]$index = c(j,p+j)
+      sos[[j]]$weights = c(1,2)
+    }
+    model$sos = sos
+    
   }
-  model$sos = sos
   
   ## Parameters for Gurobi optimization
   params$OutputFlag = 0
@@ -113,22 +139,24 @@ customBS <- function(X,y,k,polish = T){
 
 applyBS <- function(j,ASigma,vecC) {
   
-  # p = length(vecC)
+  n = dim(ASigma)[1]
+  p = length(vecC)
   # result = customBS(ASigma,-vecC,j)
   
   result = bs(ASigma,-vecC,j,intercept = F,
-              params = list(NonConvex = 2))
+              params = list(NonConvex = 2),form = 2)
   
   # Store objVal and constructed signal
-  # result$beta = result$x[1:p]
-  result$objVals = 0.5*norm(ASigma%*%as.matrix(result$beta) + vecC,
+  # if (p >= n) {result$beta = result$x[(n + 1):(n + p)]}
+  # else {result$beta = result$x[1:p]}
+  result$objval = 0.5*norm(ASigma%*%as.matrix(result$beta) + vecC,
                             type = "2")**2
   
   return (result)
   
 }
 
-recoverDriftMatrix <- function(i,p,n,numCores,method) {
+recoverDriftMatrix <- function(i,p,n,method) {
   
   set.seed(i)
   
@@ -155,62 +183,56 @@ recoverDriftMatrix <- function(i,p,n,numCores,method) {
   # True number of best subset
   k0 = sum(M_star != 0)
   
-  
   # Storing the best result after hyperparameter search
   bestResult = list()
   
-  if (method == "bs") {
-    # Number of best subset to select
-    k = seq(k0-k0%/%2,k0 + k0%/%2)
+  if (method != "tLasso") {
     
-    # Pre-allocation 
-    resultBS = list()
+    if (method == "bs") {
+      # Number of best subset to select
+      k = seq(k0-k0%/%2,k0 + k0%/%2)
+      
+      
+      # resultBS = lapply(k, applyBS, ASigma = ASigma,vecC = vecC)
+      foreach(i = k) %dopar% {applyBS(i,ASigma,vecC)} -> resultBS
+      
+      bestM = resultBS[[which.min(unlist(lapply(resultBS,function(x){x$objval})))]]$beta
+      bestResult = resultBS[[which.min(unlist(lapply(resultBS,function(x){x$objval})))]]
+    }
+    else if (method == "lasso") {
+      # Lasso
+      penalty = rep(1,p**2)
+      penalty[seq(1,p**2,by=p)] = 0
+      l1 = glmnet(ASigma,-vecC,intercept = FALSE,alpha = 1,standardize = T,penalty.factor = penalty)
+      l1.cv = cv.glmnet(ASigma,-vecC,intercept = FALSE,alpha = 1,standardize = T, penalty.factor = penalty)
+      bestM = coef(l1,s=l1.cv$lambda.min)[2:(p**2+1)]
+      
+    }
     
-    # resultBS = parLapply(numCores,k, applyBS, ASigma = ASigma,vecC = vecC)
-    foreach(i = k) %dopar% {applyBS(i,ASigma,vecC)} -> resultBS
+    bestk = sum(bestM!=0)
+    bestResult$M_star = M_star
+    bestResult$M_comp = bestM
+    bestResult$bestk = bestk
+    bestResult$k = k0
     
-    # Evaluate Metrics 
-    # resultBS = lapply(resultBS,function(x){x$tpr = tpr(x$beta,M_star)
-    # x$fpr = fpr(x$beta,M_star)
-    # x$acc = acc(x$beta,M_star)
-    # x$f1score = f1score(x$beta,M_star)
-    # return (x)})
+    # Evaluate Metrics  
     
-    bestM = resultBS[[which.min(unlist(lapply(resultBS,function(x){x$objVals})))]]$beta
-    bestResult = resultBS[[which.min(unlist(lapply(resultBS,function(x){x$objVals})))]]
+    bestResult$acc = acc(bestM,trueSparsity)
+    bestResult$tpr = tpr(bestM,trueSparsity)
+    bestResult$fpr = fpr(bestM,trueSparsity)
+    bestResult$f1score = f1score(bestM,trueSparsity)
+    bestResult$aucroc = AUCROC(bestM,trueSparsity)
+    bestResult$aucpr = AUCPR(bestM,trueSparsity)
+    
+    return (bestResult)
+    
+  }else{
+    # Save Dataset to be later loaded in Matlab 
+    writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/",n,"_",p,"/X_",n,"_",p,"_",i,".mat"),X = ASigma)
+    writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/",n,"_",p,"/y_",n,"_",p,"_",i,".mat"),y = -vecC)
+    writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/",n,"_",p,"/M_",n,"_",p,"_",i,".mat"),M = M_star)
   }
-  else if (method == "lasso") {
-    # Lasso
-    penalty = rep(1,p**2)
-    penalty[seq(1,p**2,by=p)] = 0
-    l1 = glmnet(ASigma,-vecC,intercept = FALSE,alpha = 1,standardize = T,penalty.factor = penalty)
-    l1.cv = cv.glmnet(ASigma,-vecC,intercept = FALSE,alpha = 1,standardize = T, penalty.factor = penalty)
-    bestM = coef(l1,s=l1.cv$lambda.min)[2:(p**2+1)]
-    
-  }
-  
-  bestk = sum(bestM!=0)
-  bestResult$M_star = M_star
-  bestResult$M_comp = bestM
-  bestResult$bestk = bestk
-  bestResult$k = k0
-  
-  # Evaluate Metrics  
-  tp = length(intersect(which(bestM!=0),which(M_star!=0)))
-  fp = length(setdiff(which(bestM!=0),which(M_star!=0)))
-  tn = length(intersect(which(bestM==0),which(M_star==0)))
-  fn = length(setdiff(which(bestM==0),which(M_star==0)))
-  
-  
-  bestResult$acc = (tp + tn)/(tp + tn + fp + fn)
-  bestResult$tpr = tp/(tp + fp)
-  bestResult$fpr = fp/(fp + tn)
-  bestResult$f1score = tp/(tp + 0.5*(fp + fn))
-  
-  
-  return (bestResult)
 }
-
 
 tp <- function(comp,gt){ return (length(intersect(which(comp!=0),which(gt!=0))))}
 fp <- function(comp,gt){return (length(setdiff(which(comp!=0),which(gt!=0))))}
@@ -222,7 +244,7 @@ acc <- function(comp,gt){
                                             + fp(comp,gt) + fn(comp,gt))
   return (accuracy)}
 tpr <- function(comp,gt){
-  return (tp(comp,gt)/(tp(comp,gt) + fp(comp,gt)))
+  return (tp(comp,gt)/(tp(comp,gt) + fn(comp,gt)))
 }
 fpr <- function(comp,gt){
   return (fp(comp,gt)/(fp(comp,gt) + tn(comp,gt)))
@@ -233,4 +255,56 @@ f1score <- function(comp,gt){
 
 sigmoid <- function(x){
   return (exp(abs(x))/(1+exp(abs(x))))
+}
+precision <- function(comp,gt){
+  return (tp(comp,gt)/(tp(comp,gt) + fp(comp,gt)))
+}
+
+
+AUCPR <- function(comp,gt){
+  
+  comp <- sigmoid(abs(comp))
+  
+  x = list()
+  comp_sort <- c(0,sort(comp))
+  for (i in 1:length(comp_sort)) {
+    comp_i <- (comp > comp_sort[i])
+    x$precision[i] <- precision(comp_i,gt)
+    if (!is.finite(x$precision[i])) x$precision[i] <- 1
+    x$recall[i] <- tpr(comp_i,gt)
+  }
+  
+  temp <- 0
+  n <- length(x$precision)
+  for (i in 1:(n-1)){
+    ## trapezoidal quadrature rule
+    temp <- temp + (x$precision[i + 1] + x$precision[i]) * 
+      ( x$recall[i] - x$recall[i+1]) / 2
+  }
+  
+  
+  return(temp)
+}
+
+AUCROC <- function(comp,gt){
+  
+  comp <- sigmoid(abs(comp))
+  x = list()
+  comp_sort <- c(0,sort(comp))
+  for (i in 1:length(comp_sort)) {
+    comp_i <- (comp > comp_sort[i])
+    x$tpr[i] <- tpr(comp_i,gt)
+    x$fpr[i] <- fpr(comp_i,gt)
+  }
+  
+  temp <- 0
+  n <- length(x$tpr)
+  for (i in 1:(n-1)){
+    ## trapezoidal quadrature rule
+    temp <- temp + (x$tpr[i + 1] + x$tpr[i]) * 
+      ( x$fpr[i] - x$fpr[i+1]) / 2
+  }
+  
+  
+  return(temp)
 }

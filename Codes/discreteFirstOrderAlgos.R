@@ -95,7 +95,7 @@ algorithm1 <-function(X,y,k,inits = 50, p = dim(X)[2],polish = T,maxIter = 1000)
 }
 
 
-proj_grad = function(X, y, k, inits=50, maxiter=1000,polish=TRUE) {
+proj_grad = function(X, y, k, nruns=50, maxiter=1000,tol=1e-4,polish=TRUE) {
   
   n = nrow(X)
   p = ncol(X)
