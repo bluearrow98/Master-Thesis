@@ -19,14 +19,14 @@ clusterEvalQ(numCores,library(gurobi))
 
 
 # Signal size
-p = 5
+p = seq(5,10)
 
 # Number of signals 
 N = 100
 
 
 # Method for best subset
-method = "bs"
+method = "lasso"
 
 set.seed(99)
 
@@ -34,7 +34,7 @@ set.seed(99)
 for (s in p) {
   
   # Number of data to be sampled
-  n = c(100)
+  n = c(100,200,500,1000,5000,10000,100000,Inf)
   
   
   for (d in n) {
@@ -54,7 +54,7 @@ for (s in p) {
     }
     
     save(accMax,tprAvg,fprAvg,f1scoreAvg,timeAvg,aucrocAvg,aucprAvg,
-         file = paste0(getwd(),"/../Results/",d,"_",s,".RData"))
+         file = paste0(getwd(),"/../Results/SimResults/",d,"_",s,"_res.RData"))
   
   }
 }

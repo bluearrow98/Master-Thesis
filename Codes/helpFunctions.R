@@ -117,7 +117,7 @@ customBS <- function(X,y,k,polish = T){
     for (j in 1:p){
       sos[[j]] = list()
       sos[[j]]$type = 1
-      sos[[j]]$index = c(j,p+j)
+      sos[[j]]$index = c(n+j,n+p+j)
       sos[[j]]$weights = c(1,2)
     }
     model$sos = sos
@@ -190,7 +190,8 @@ recoverDriftMatrix <- function(i,p,n,method) {
     
     if (method == "bs") {
       # Number of best subset to select
-      k = seq(k0-k0%/%2,k0 + k0%/%2)
+      # k = seq(k0-k0%/%2,k0 + k0%/%2)
+      k <- seq(1,p**2,length.out = 10)
       
       
       # resultBS = lapply(k, applyBS, ASigma = ASigma,vecC = vecC)
