@@ -9,7 +9,7 @@ n = 1000
 
 # Best subset results
 databs <- data.frame(p=p,
-                   t(sapply(p,function(x){load(paste0(getwd(),"/../Results/SimResults/"
+                   t(sapply(p,function(x){load(paste0(getwd(),"/../Results/SimResults-10 point grid/"
                                                       ,x,"_",n,"_res.RData"))
                      return (c(accMax,f1scoreAvg,tprAvg,fprAvg,aucprAvg,aucrocAvg))})))
 colnames(databs) <- c("p","Max. Acc","F1 Score Avg.","TPR Avg.","FPR Avg.", "AUC PR Avg.",
@@ -30,7 +30,7 @@ combineData <- bind_rows(databs,datalasso, .id = "Method")
 
 
 dir = getwd()
-pdf(file = paste0(dir,"/../Results/Plots for Variable signal size/n",n,"_res.pdf"))
+pdf(file = paste0(dir,"/../Results/Plots for Variable signal size/10 point grid/n",n,"_res.pdf"))
 p1 <- ggplot(combineData)+
   geom_point(aes(x = as.character(p),y = metrics,group = Method,color = Method),size = 2) + 
   geom_line(aes(x = as.character(p),y = metrics,group = Method, color = Method),size = 1) +

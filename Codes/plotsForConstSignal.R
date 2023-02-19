@@ -4,15 +4,14 @@ library(ggplot2)
 library(reshape2)
 library(dplyr)
 
-setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-p = c(5,6,7,8,9,10)
-n = c(100,200,500,1000,5000,10000,100000,Inf)
+p = c(5)
+n = c(100,200,500,1000,10000,100000,Inf)
 
 for (i in p) {
   
   # Best subset results
   databs <- data.frame(n=n,
-                     bs = t(sapply(n,function(x){load(paste0(getwd(),"/../Results/SimResults/"
+                     bs = t(sapply(n,function(x){load(paste0(getwd(),"/../Results/SimResults-10 point grid/"
                                                         ,i,"_",x,"_res.RData"))
                         return (c(accMax,f1scoreAvg,tprAvg,fprAvg,aucprAvg,aucrocAvg))})))
   colnames(databs) <- c("n","Max. Acc","F1 Score Avg.","TPR Avg.","FPR Avg.", "AUC PR Avg.",
@@ -22,7 +21,7 @@ for (i in p) {
   # Lasso results
   datalasso <- data.frame(n=n,
                      bs = t(sapply(n,function(x){load(paste0(getwd(),"/../Results/LassoResults/"
-                                                             ,x,"_",i,".RData"))
+                                                             ,x,"_",i,"_res.RData"))
                        return (c(accMax,f1scoreAvg,tprAvg,fprAvg,aucprAvg,aucrocAvg))})))
   colnames(datalasso) <- c("n","Max. Acc","F1 Score Avg.","TPR Avg.","FPR Avg.", "AUC PR Avg.",
                       "AUC ROC Avg.")
@@ -43,7 +42,7 @@ for (i in p) {
   
   
   dir = getwd()
-  pdf(file = paste0(dir,"/../Results/Plots for Constant signal size/p",i,"_res.pdf"))
+  pdf(file = paste0(dir,"/../Results/Plots for Constant signal size/10 point grid/p",i,"_res.pdf"))
   print(p1)
   dev.off()
 }

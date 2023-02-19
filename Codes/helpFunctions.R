@@ -12,12 +12,31 @@ stabSignal <- function(p){
   return (M)
 }
 
+
 getPopCovar <- function(M,C){
   p = dim(M)[1]
   Sigma = solve(kronecker(diag(p),M) + kronecker(M,diag(p)),-c(C))
   Sigma = matrix(Sigma,nrow = p)
   
   return (Sigma)
+}
+
+invCov <- function(Mvec,Cvec){
+  # Get number of variables
+  p = sqrt(length(Mvec))
+  
+  # Get the drift matrix and volatility matrix
+  M = matrix(Mvec,nrow = p)
+  C = matrix(Cvec,nrow = p)
+  
+  # Get the recovered covariance matrix
+  Sigma = getPopCovar(M,C)
+  
+  # Find the inverse using decomposition
+  E = eigen(Sigma)
+  Lambda = diag(E$values^(-1))
+  Gamma = E$vectors
+  invCov = Gamma%*%Lambda%*%t(Gamma)
 }
 
 sampleX <- function(n,Sigma){
@@ -41,6 +60,24 @@ standardize <- function(X){
   return (X_shift)
 }
 
+applyBS <- function(j,ASigma,vecC) {
+  
+  n = dim(ASigma)[1]
+  p = length(vecC)
+  result = customBS(ASigma,-vecC,j)
+  
+  # result = bs(ASigma,-vecC,j,intercept = F,
+  #             params = list(NonConvex = 2),form = 2)
+  
+  # Store objVal and constructed signal
+  if (p >= n) {result$beta = result$x[(n + 1):(n + p)]}
+  else {result$beta = result$x[1:p]}
+  result$objval = 0.5*norm(ASigma%*%as.matrix(result$beta) + vecC,
+                           type = "2")**2
+  
+  return (result)
+  
+}
 
 customBS <- function(X,y,k,polish = T){
   
@@ -96,7 +133,7 @@ customBS <- function(X,y,k,polish = T){
     
   }else{
     # Warm-start model creation (Eq 2.6)
-    Mu_zeta = max(colSums(apply(abs(X),1,sort,decreasing=TRUE)[,1:k]))*Mu
+    Mu_zeta = max(colSums(apply(abs(X),1,sort,decreasing=TRUE)[,1:k,drop = F]))*Mu
     model$A = spMatrix(nrow = n + 1, ncol = n + 2*p,
                        i = c(seq(1,n),rep(seq(1,n),each = p),rep(n+1,p)),
                        j = c(seq(1,n),rep(seq(n+1,n+p),n),seq(n+ p + 1,n + 2*p)),
@@ -137,102 +174,95 @@ customBS <- function(X,y,k,polish = T){
   return(result)
 }
 
-applyBS <- function(j,ASigma,vecC) {
-  
-  n = dim(ASigma)[1]
-  p = length(vecC)
-  # result = customBS(ASigma,-vecC,j)
-  
-  result = bs(ASigma,-vecC,j,intercept = F,
-              params = list(NonConvex = 2),form = 2)
-  
-  # Store objVal and constructed signal
-  # if (p >= n) {result$beta = result$x[(n + 1):(n + p)]}
-  # else {result$beta = result$x[1:p]}
-  result$objval = 0.5*norm(ASigma%*%as.matrix(result$beta) + vecC,
-                            type = "2")**2
-  
-  return (result)
-  
-}
+recoverDriftMatrix <- function(i, p, n, method) {
 
-recoverDriftMatrix <- function(i,p,n,method) {
-  
-  set.seed(i)
-  
-  # True signal and Volatility matrix
-  M_star = stabSignal(p)
-  trueSparsity = (M_star != 0)
-  C = diag(runif(p))
-  # Population covariance
-  Sigma_star = getPopCovar(M_star,C)  
-  # Sampled data and covariance
-  if (n == Inf){
-    Sigma = Sigma_star
-  }else{
-    X = sampleX(n, Sigma_star)
-    Sigma = getDataCovar(X)
+set.seed(i)
+
+# True signal and Volatility matrix
+M_star <- stabSignal(p) 
+trueSparsity <- (M_star != 0)
+C <- diag(runif(p))
+# Population covariance
+Sigma_star <- getPopCovar(M_star,C)  
+# Sampled data and covariance
+if (n == Inf){
+  Sigma <- Sigma_star
+}else{
+  X <- sampleX(n, Sigma_star)
+  Sigma <- getDataCovar(X)
+}
+# Data matrix of regression
+KPermute <- spMatrix(nrow = p**2, ncol = p**2, i = c(seq(1,p**2)),
+                    j = c(sapply(seq(1,p),function(x){seq(x,p**2,by=p)})),
+                    x = c(rep(1,p**2)))
+ASigma <- as.matrix(kronecker(Sigma,diag(p)) + kronecker(diag(p),Sigma)%*%KPermute)
+vecC <- c(C)
+
+# True number of best subset
+k0 <- sum(M_star != 0)
+
+# Storing the best result after hyperparameter search
+bestResult <- list()
+
+if (method != "tLasso") {
+
+  if (method == "bs") {
+    # Number of best subset to select
+    # k = seq(k0-k0%/%2,k0 + k0%/%2)
+    k <- floor(seq(p,p**2,length.out = 10))
+
+
+    resultBS = lapply(k, applyBS, ASigma = ASigma,vecC = vecC)
+    # foreach(i = k) %dopar% {applyBS(i,ASigma,vecC)} -> resultBS
+
+    bestM <- resultBS[[which.min(unlist(lapply(resultBS,function(x){x$objval})))]]$beta
+    bestResult <- resultBS[[which.min(unlist(lapply(resultBS,function(x){x$objval})))]]
   }
-  # Data matrix of regression
-  KPermute = spMatrix(nrow = p**2, ncol = p**2, i = c(seq(1,p**2)),
-                      j = c(sapply(seq(1,p),function(x){seq(x,p**2,by=p)})),
-                      x = c(rep(1,p**2)))
-  ASigma = as.matrix(kronecker(Sigma,diag(p)) + kronecker(diag(p),Sigma)%*%KPermute)
-  vecC = c(C)
-  
-  # True number of best subset
-  k0 = sum(M_star != 0)
-  
-  # Storing the best result after hyperparameter search
-  bestResult = list()
-  
-  if (method != "tLasso") {
-    
-    if (method == "bs") {
-      # Number of best subset to select
-      # k = seq(k0-k0%/%2,k0 + k0%/%2)
-      k <- seq(1,p**2,length.out = 10)
-      
-      
-      # resultBS = lapply(k, applyBS, ASigma = ASigma,vecC = vecC)
-      foreach(i = k) %dopar% {applyBS(i,ASigma,vecC)} -> resultBS
-      
-      bestM = resultBS[[which.min(unlist(lapply(resultBS,function(x){x$objval})))]]$beta
-      bestResult = resultBS[[which.min(unlist(lapply(resultBS,function(x){x$objval})))]]
-    }
-    else if (method == "lasso") {
-      # Lasso
-      penalty = rep(1,p**2)
-      penalty[seq(1,p**2,by=p)] = 0
-      l1 = glmnet(ASigma,-vecC,intercept = FALSE,alpha = 1,standardize = T,penalty.factor = penalty)
-      l1.cv = cv.glmnet(ASigma,-vecC,intercept = FALSE,alpha = 1,standardize = T, penalty.factor = penalty)
-      bestM = coef(l1,s=l1.cv$lambda.min)[2:(p**2+1)]
-      
-    }
-    
-    bestk = sum(bestM!=0)
-    bestResult$M_star = M_star
-    bestResult$M_comp = bestM
-    bestResult$bestk = bestk
-    bestResult$k = k0
-    
-    # Evaluate Metrics  
-    
-    bestResult$acc = acc(bestM,trueSparsity)
-    bestResult$tpr = tpr(bestM,trueSparsity)
-    bestResult$fpr = fpr(bestM,trueSparsity)
-    bestResult$f1score = f1score(bestM,trueSparsity)
-    bestResult$aucroc = AUCROC(bestM,trueSparsity)
-    bestResult$aucpr = AUCPR(bestM,trueSparsity)
-    
-    return (bestResult)
-    
-  }else{
-    # Save Dataset to be later loaded in Matlab 
-    writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/",n,"_",p,"/X_",n,"_",p,"_",i,".mat"),X = ASigma)
-    writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/",n,"_",p,"/y_",n,"_",p,"_",i,".mat"),y = -vecC)
-    writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/",n,"_",p,"/M_",n,"_",p,"_",i,".mat"),M = M_star)
+  else if (method == "lasso") {
+    # Lasso
+    penalty <- rep(1,p**2)
+    penalty[seq(1,p**2,by=p+1)] <- 0
+
+    initGrid <- seq(10, 10^-5, length.out = 100)
+    coarseLasso <- glmnet(ASigma, -vecC, intercept = FALSE, alpha = 1, 
+                            standardize = T, penalty.factor = penalty,
+                            lambda = initGrid)
+    # Find min lambda such that M is diagonal
+    lambda <- min(initGrid[(colSums(penalty*(coarseLasso$beta!=0))==0 & 
+                              colSums((1-penalty)*(coarseLasso$beta!=0)) == p)])
+    fineGrid <- seq(lambda, lambda/10^4, length.out = 100)
+    fineLasso <- glmnet(ASigma, -vecC, intercept = FALSE, alpha = 1, 
+                        standardize = T, penalty.factor = penalty,
+                        lambda = fineGrid)
+    Siginv_comp <- apply(fineLasso$beta, 2, invCov, vecC)
+    bic_scores <- apply(Siginv_comp, 2, bic_score, Sigma, n)
+    posterior_prob <- postprb_bic(bic_scores)
+    bestM <- fineLasso$beta[, which.max(posterior_prob)]
   }
+
+  bestk <- sum(bestM!=0)
+  bestResult$M_star <- M_star
+  bestResult$M_comp <- bestM
+  bestResult$bestk <- bestk
+  bestResult$k <- k0
+
+  # Evaluate Metrics
+
+  bestResult$acc <- acc(bestM, trueSparsity)
+  bestResult$tpr <- tpr(bestM, trueSparsity)
+  bestResult$fpr <- fpr(bestM, trueSparsity)
+  bestResult$f1score <- f1score(bestM, trueSparsity)
+  bestResult$aucroc <- AUCROC(bestM, trueSparsity)
+  bestResult$aucpr <- AUCPR(bestM, trueSparsity)
+
+  return(bestResult)
+
+}else {
+  # Save Dataset to be later loaded in Matlab 
+writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/",n,"_",p,"/X_",n,"_",p,"_",i,".mat"), X = ASigma)
+writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/",n,"_",p,"/y_",n,"_",p,"_",i,".mat"), y = -vecC)
+writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/",n,"_",p,"/M_",n,"_",p,"_",i,".mat"), M = M_star)
+}
 }
 
 tp <- function(comp,gt){ return (length(intersect(which(comp!=0),which(gt!=0))))}
@@ -308,4 +338,37 @@ AUCROC <- function(comp,gt){
   
   
   return(temp)
+}
+
+# Compute BIC Scores 
+bic_score <- function(K, S, n){
+  if (is.matrix(K)){
+    # do nothing
+  }else{
+    K <- matrix(K,nrow = sqrt(length(K)))
+  }
+  if (n == Inf) n <- 10^10
+  bic <- n*(-log(determinant(K)$modulus) + sum(diag(S%*%K))) + sum(unique(K)!=0)*log(n)
+  
+  return(bic)
+}
+
+# Compute extended BIC scores 
+ebic_score <- function(K, S, n, gamma){
+  if (is.matrix(K)){
+    # do nothing
+  }else{
+    K <- matrix(K,nrow = sqrt(length(K)))
+  }
+  if (n==Inf) n <- 10^10
+  p <- dim(K)[1]
+  ebic = n*(-log(determinant(K)$modulus) + sum(diag(S%*%K))) + sum(unique(K)!=0)*log(n) + 4*gamma*sum(unique(K)!=0)*log(p)
+  
+  return(ebic)
+}
+
+# Posterior model probability 
+postprb_bic <- function(bic){
+  weights <- -bic/2
+  post_prb <- sapply(weights,function(x){x/sum(weights)})
 }
