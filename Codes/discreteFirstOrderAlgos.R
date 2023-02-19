@@ -5,7 +5,7 @@ algorithm2 <- function(X,y,k,inits = 50,p=dim(X)[2],polish = T,maxIter = 1000) {
   bm = matrix(rep(0,p*inits),ncol = p)
   gmPlus = rep(0,inits)
   L = norm(t(X)%*%X,type = "2")
-
+  
   for (i in 1:inits) {
     randk = sample(1:k,1)
     randIndex = sample(1:p,randk)
@@ -14,10 +14,11 @@ algorithm2 <- function(X,y,k,inits = 50,p=dim(X)[2],polish = T,maxIter = 1000) {
     H = bm[i,] - t(X)%*%(X%*%bm[i,] - y)/L
     etam[which(abs(H) %in% sort(abs(H),decreasing=T)[1:k])] = 
       H[which(abs(H) %in% sort(abs(H),decreasing=T)[1:k])]
+    bmPlus = rep(0,p)
     gm = 0
     gmPlus[i] = 0.5*norm(X%*%etam - y, type = "2")**2
     iter = 1
-    while ((gm - gmPlus[i])/abs(gmPlus[i]) >= 1e-4)  {
+    while ( (gm - gmPlus[i])/gmPlus[i] >= 1e-4)  {
       # Solution to min g(lambda*eta_m + (1-lambda)*beta_m)
       lambda = solve(t(etam - bm[i,])%*%t(X)%*%X%*%(etam-bm[i,]),t(etam - bm[i,])%*%t(X)%*%(y - X%*%bm[i,]))
       bm[i,] = c(lambda)*etam + c((1-lambda))*bm[i,]
@@ -25,28 +26,22 @@ algorithm2 <- function(X,y,k,inits = 50,p=dim(X)[2],polish = T,maxIter = 1000) {
       etam = H
       etam[-which(abs(H) %in% sort(abs(H),decreasing=T)[1:k])] = 0
       gm = gmPlus[i]
-      gmPlus[i] = 0.5*norm(X%*%etam - y, type = "2")**2
+      # gmPlus[i] = 0.5*norm(X%*%etam - y, type = "2")**2
       iter = iter + 1
       if (iter > maxIter) break
     }
     
-    # Send to Algorithm 1 
-    gm = 0
-    iter = 1 
-    while ((gm - gmPlus[i])/abs(gmPlus[i]) >= 1e-4) {
-      bm[i,] = bm[i,] - t(X)%*%(X%*%bm[i,] - y)/L
-      bm[i,-which(abs(bm[i,]) %in% sort(abs(bm[i,]),decreasing=T)[1:k])] = 0
-      gm = gmPlus[i]
-      gmPlus[i] = 0.5*norm(X%*%bm[i,] - y, type = "2")**2
-      iter = iter + 1 
-    }
+    # Send to Algorithm 1
+    # gm = 0
+    # iter = 1
+    # while ((gm - gmPlus[i])/abs(gmPlus[i]) >= 1e-4) {
+    #   bm[i,] = bm[i,] - t(X)%*%(X%*%bm[i,] - y)/L
+    #   bm[i,-which(abs(bm[i,]) %in% sort(abs(bm[i,]),decreasing=T)[1:k])] = 0
+    #   gm = gmPlus[i]
+    #   gmPlus[i] = 0.5*norm(X%*%bm[i,] - y, type = "2")**2
+    #   iter = iter + 1
+    # }
     
-    if (polish == T) {
-      Xj = X[,which(bm[i,]!=0)]
-      fitCoef = lsfit(Xj,y,intercept = F)$coefficients
-      bm[i,which(bm[i,]!=0)] = fitCoef
-      gmPlus[i] = 0.5*norm(X%*%bm[i,] - y, type = "2")**2
-    }
   }
   # Take the coefficients with the best objective
   bm = bm[which.min(gmPlus),]
@@ -54,8 +49,6 @@ algorithm2 <- function(X,y,k,inits = 50,p=dim(X)[2],polish = T,maxIter = 1000) {
   
   return (list("bm" = bm, "gm" = min(gmPlus)))
 }
-
-
 
 # Discrete First-order Algorithm 1 Implementation 
 algorithm1 <-function(X,y,k,inits = 50, p = dim(X)[2],polish = T,maxIter = 1000) {
@@ -95,7 +88,7 @@ algorithm1 <-function(X,y,k,inits = 50, p = dim(X)[2],polish = T,maxIter = 1000)
 }
 
 
-proj_grad = function(X, y, k, inits=50, maxiter=1000,polish=TRUE) {
+proj_grad = function(X, y, k, nruns=50, maxiter=1000,tol=1e-4,polish=TRUE) {
   
   n = nrow(X)
   p = ncol(X)
