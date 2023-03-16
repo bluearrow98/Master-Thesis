@@ -126,14 +126,11 @@ proj_grad <- function(X, y, k, nruns = 50, maxiter = 1000, tol = 1e-4, polish = 
   else beta0 <- t(X) %*% y / colSums(X^2)
 
   # One edge initialization
-  diag_ind <- seq(1, p, by = sqrt(p) + 1)
-  edge_ind <- sample(seq(1, p)[-diag_ind],1) 
-  beta0[-c(diag_ind, edge_ind)] <- 0
+  # diag_ind <- seq(1, p, by = sqrt(p) + 1)
+  # beta0 <- one_edge_ini(beta0, p)
 
-  # ids <- order(abs(beta0), decreasing=TRUE)
-  # beta0[-ids[1:k]] <- 0
-
-  # One edge initialization
+  ids <- order(abs(beta0), decreasing=TRUE)
+  beta0[-ids[1:k]] <- 0
 
   # If L is NULL, use the power method to approximate the largest eigenvalue
   # of X^T X, for the step size
@@ -169,19 +166,39 @@ proj_grad <- function(X, y, k, nruns = 50, maxiter = 1000, tol = 1e-4, polish = 
       best.crit <- cur.crit
       best.beta <- beta
     }
-    
+
     # Start the next run off at a random spot (particular choice matches
     # Rahul's Matlab code)
-    # beta <- beta0 + 2 * runif(p) * max(abs(beta0), 1)
+    beta <- beta0 + 2 * runif(p) * max(abs(beta0), 1)
 
     # Start the next run off by adding another edge rabdomly
-    randEdge <- 2 * runif(p) * max(abs(beta0), 1)
-    edge_ind <- sample(seq(1, p)[-diag_ind], 1)
-    randEdge[-edge_ind] <- 0
-    beta <- beta0 + randEdge
+    # beta0 <- one_edge_next(beta0, diag_ind, p)
   }
-  
+
   obj <- 0.5*norm(X %*% best.beta - y, type = "2")**2
   
   return(list("bm" = best.beta, "gm" = obj))
+}
+
+one_edge_ini <- function(beta0, p){
+  # Get the diagonal indices
+  diag_ind <- seq(1, p, by = sqrt(p) + 1)
+  # Sample a random index from the off-diagonal
+  edge_ind <- sample(seq(1, p)[-diag_ind], 1)
+  # Assign everything else as zero
+  beta0[-c(diag_ind, edge_ind)] <- 0
+
+  return(beta0)
+}
+
+one_edge_next <- function(beta0, diag_ind, p){
+  # Start with random number of edges
+  randEdge <- 2 * runif(p) * max(abs(beta0), 1)
+  # Choose a single edge at random out of all
+  edge_ind <- sample(seq(1, p)[-diag_ind], 1)
+  # Add it to the initial one edge initialized vector
+  randEdge[-edge_ind] <- 0
+  beta <- beta0 + randEdge
+
+  return(beta0)
 }
