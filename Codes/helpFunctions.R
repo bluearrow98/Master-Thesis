@@ -6,20 +6,19 @@ library(doParallel)
 library(gurobi)
 
 stabSignal <- function(p){
-  k = sample(c(1,2,3,4),size = 1)
-  M = matrix(rnorm(p**2)*rbern(p**2,prob = 1 / p), nrow = p)
+  k = sample(c(1,2,3,4), size = 1)
+  M = matrix(rnorm(p**2) * rbern(p ** 2,prob = 1 / p), nrow = p)
   nonDiagAbsSum = sum(abs(M)) - sum(diag(abs(M)))
   diag(M) = - nonDiagAbsSum - abs(rnorm(p))
-  return (M)
+  return(M)
 }
 
 
-getPopCovar <- function(M, C, lambda = 0){
-  p = dim(M)[1]
-  Sigma <- solve(kronecker(diag(p), M) + kronecker(M, diag(p))
-                  + lambda * diag(p**2), -c(C))
+getPopCovar <- function(M, C){
+  p <- dim(M)[1]
+  Sigma <- solve(kronecker(diag(p), M) + kronecker(M, diag(p)), -c(C))
   Sigma <- matrix(Sigma, nrow = p)
-  
+
   return(Sigma)
 }
 
@@ -32,7 +31,7 @@ invCov <- function(Mvec,Cvec){
   C <- matrix(Cvec, nrow = p)
 
   # Get the recovered covariance matrix
-  Sigma <- getPopCovar(M, C, lambda = 10^-5)
+  Sigma <- getPopCovar(M, C)
 
   # Find the inverse using decomposition
   E <- eigen(Sigma)
@@ -85,7 +84,7 @@ applyBS <- function(j, ASigma, vecC) {
 
 }
 
-customBS <- function(X,y,k,polish = T){
+customBS <- function(X, y, k, polish = TRUE){
 
   n <- dim(X)[1]
   p <- dim(X)[2]
@@ -141,18 +140,18 @@ customBS <- function(X,y,k,polish = T){
   }else{
     # Warm-start model creation (Eq 2.6)
     Mu_zeta <- max(colSums(apply(abs(X), 1, sort,
-                    decreasing=TRUE)[, 1:k, drop = F])) * Mu
-    model$A <- spMatrix(nrow = n + 1, ncol = n + 2 * p,
-                       i = c(seq(1, n), rep(seq(1, n), each = p), rep(n + 1, p)),
-                       j = c(seq(1, n), rep(seq(n+1, n+p), n), seq(n + p + 1, n + 2 * p)),
-                       x = c(rep(1, n), c(-t(X)), rep(1, p)))
+                    decreasing=TRUE)[, 1:k, drop = FALSE])) * Mu
+    model$A <- spMatrix(nrow = n + 2, ncol = n + 2 * p,
+                       i = c(seq(1, n), rep(seq(1, n), each = p), rep(n + 1, p), rep(n + 2, sqrt(p))),
+                       j = c(seq(1, n), rep(seq(n+1, n+p), n), seq(n + p + 1, n + 2 * p), seq(n + p + 1, n + 2 * p, by = sqrt(p) + 1)),
+                       x = c(rep(1, n), c(-t(X)), rep(1, p), rep(1, sqrt(p))))
     model$Q <- spMatrix(nrow = n + 2 * p, ncol = n + 2 * p,
                        i = seq(1, n), j = seq(1, n), x = rep(0.5, n))
     model$obj <- c(rep(0, n), -t(X) %*% y, rep(0, p))
     model$ub <- c(rep(Mu_zeta, n), rep(Mu, p), rep(1, p))
     model$lb <- c(rep(-Mu_zeta, n), rep(-Mu, p), rep(0, p))
-    model$rhs <- c(rep(0, n), p - k)
-    model$sense <- c(rep("=", n),">=")
+    model$rhs <- c(rep(0, n), p - k, 0)
+    model$sense <- c(rep("=", n), ">=", "=")
     model$vtype <- c(rep("C", n), rep("C", p), rep("B", p))
     model$start <- c(X %*% M_p, M_p, 1 - z0)
 
@@ -230,6 +229,12 @@ if (method != "tLasso") {
 
     betas <- sapply(resultBS, function(x) {return(x$beta)})
 
+    # Choose the k's for which M is diagonal
+    k.diagInd <- which(apply(betas, 2, is.diagonal, p))
+    betas <- betas[, k.diagInd, drop = FALSE]
+
+    objvals <- sapply(resultBS, function(x) {return(x$objval)})
+
   }else if (method == "lasso") {
     # Lasso
     penalty <- rep(1, p**2)
@@ -249,6 +254,9 @@ if (method != "tLasso") {
                         lambda = fineGrid)
 
     betas <- fineLasso$beta
+
+    # Get objective values, if necessary
+    objvals <- apply(betas, 2, function(x){norm(ASigma %*% x + vecC, type = "2")})
   }
 
   # Choose the best drift matrix based on posterior model probabilities
@@ -256,6 +264,9 @@ if (method != "tLasso") {
   bic_scores <- apply(Siginv_comp, 2, bic_score, Sigma, n)
   posterior_prob <- postprb(bic_scores)
   bestM <- betas[, which.max(posterior_prob)]
+
+  # Choose the best drift matrix based on objective values
+  # bestM <- betas[, which.min(objvals)]
 
   # Save the best result
   bestk <- sum(bestM!=0)
@@ -405,4 +416,11 @@ aic_score <- function(K, S, n) {
 postprb <- function(scores) {
   weights <- -scores / 2
   post_prb <- sapply(weights, function(x) {x / sum(weights)})
+}
+
+# Check if matrix is stable
+is.diagonal <- function(Mvec, p) {
+
+  diag_ind <- seq(1, p ** 2, by = p + 1)
+  return(sum(Mvec[diag_ind] != 0) == p)
 }
