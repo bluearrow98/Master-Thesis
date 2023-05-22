@@ -1,3 +1,5 @@
+source("helpFunctions.R")
+library(glasso)
 
 # Discrete First-order Algorithm 1 Implementation
 algorithm1 <- function( X, y, k, inits = 50, p = dim(X)[2], polish = T, maxIter = 1000, tol = 1e-4) {
@@ -113,8 +115,6 @@ algorithm2 <- function( X, y, k, inits = 50, p = dim(X)[2], polish = T, maxIter 
   return(list("bm" = best_beta, "gm" = obj_crit))
 }
 
-
-
 proj_grad <- function(X, y, k, nruns = 50, maxiter = 1000, tol = 1e-4, polish = TRUE) {
 
   n <- nrow(X)
@@ -124,10 +124,6 @@ proj_grad <- function(X, y, k, nruns = 50, maxiter = 1000, tol = 1e-4, polish = 
   # and thresholded marginal regression coefficients when p >= n
   if (p < n) beta0 <- lsfit(X, y, int = FALSE)$coef
   else beta0 <- t(X) %*% y / colSums(X^2)
-
-  # One edge initialization
-  # diag_ind <- seq(1, p, by = sqrt(p) + 1)
-  # beta0 <- one_edge_ini(beta0, p)
 
   ids <- order(abs(beta0), decreasing=TRUE)
   beta0[-ids[1:k]] <- 0
@@ -170,13 +166,71 @@ proj_grad <- function(X, y, k, nruns = 50, maxiter = 1000, tol = 1e-4, polish = 
     # Start the next run off at a random spot (particular choice matches
     # Rahul's Matlab code)
     beta <- beta0 + 2 * runif(p) * max(abs(beta0), 1)
-
-    # Start the next run off by adding another edge rabdomly
-    # beta0 <- one_edge_next(beta0, diag_ind, p)
   }
 
   obj <- 0.5*norm(X %*% best.beta - y, type = "2")**2
-  
+
+  return(list("bm" = best.beta, "gm" = obj))
+}
+
+proj_grad_oneEdge <- function(X, y, k, nruns = 50, maxiter = 1000, tol = 1e-4, polish = TRUE) {
+
+  n <- nrow(X)
+  p <- ncol(X)
+
+  # If beta0 is NULL, use thresholded least squares coefficients when p < n,
+  # and thresholded marginal regression coefficients when p >= n
+  if (p < n) beta0 <- lsfit(X, y, int = FALSE)$coef
+  else beta0 <- t(X) %*% y / colSums(X^2)
+
+  # One edge initialization
+  diag_ind <- seq(1, p, by = sqrt(p) + 1)
+  beta0 <- one_edge_ini(beta0, p)
+
+  ids <- order(abs(beta0), decreasing=TRUE)
+  beta0[-ids[1:k]] <- 0
+
+  # If L is NULL, use the power method to approximate the largest eigenvalue
+  # of X^T X, for the step size
+  L <- norm(t(X)%*%X,type = "2")
+
+  beta.beta <- beta0
+  best.crit <- Inf
+  beta <- beta0
+
+  for (r in 1:nruns) {
+    for (i in 1:maxiter) {
+      beta.old <- beta
+
+      # Take gradient descent step
+      grad <- -t(X) %*% (y - X %*% beta)
+      beta <- beta - grad/L
+
+      # Set to zero all but the top k
+      ids <- order(abs(beta), decreasing=TRUE)
+      beta[-ids[1:k]] <- 0
+
+      # Perform least squares polishing, if we are asked to
+      if (polish) beta[ids[1:k]] <- lsfit(X[,ids[1:k]], y, int = FALSE)$coef
+
+      # Stop if the relative difference in coefficients is small enough
+      if (norm(beta - beta.old) / max(norm(beta), 1) < tol) break
+    }
+
+    # Compute the criterion for the current coefficients, compare to the
+    # best so far
+    cur.crit <- sum((y - X %*% beta)^2)
+    if (cur.crit < best.crit) {
+      best.crit <- cur.crit
+      best.beta <- beta
+    }
+
+    # Start the next run off by adding another edge randomly
+    beta0 <- one_edge_next(beta0, diag_ind, p)
+  }
+
+  obj <- 0.5*norm(X %*% best.beta - y, type = "2")**2
+
   return(list("bm" = best.beta, "gm" = obj))
 }
 
@@ -202,3 +256,86 @@ one_edge_next <- function(beta0, diag_ind, p){
 
   return(beta0)
 }
+
+proj_grad_glasso <- function(X, y, k, nruns = 50, maxiter = 1000, tol = 1e-4, polish = TRUE) {
+
+  n <- nrow(X)
+  p <- ncol(X)
+
+  # If beta0 is NULL, use thresholded least squares coefficients when p < n,
+  # and thresholded marginal regression coefficients when p >= n
+  if (p < n) beta0 <- lsfit(X, y, int = FALSE)$coef
+  else beta0 <- t(X) %*% y / colSums(X^2)
+
+  # Initialization by graphical lasso
+  Sigma <- getSigma(X)
+  graphLasso <- glassopath(Sigma, rho = NULL)
+  bicScores <-apply(graphLasso$w, 3, bic_score, Sigma, n)
+  posterior_prob <- sapply(bicScores, postprb)
+  bestgLasso <- which.max(posterior_prob)
+  beta0[c(graphLasso$wi[, , bestgLasso]) == 0] <- 0
+
+  ids <- order(abs(beta0), decreasing=TRUE)
+  beta0[-ids[1:k]] <- 0
+
+  # If L is NULL, use the power method to approximate the largest eigenvalue
+  # of X^T X, for the step size
+  L <- norm(t(X)%*%X,type = "2")
+
+  beta.beta <- beta0
+  best.crit <- Inf
+  beta <- beta0
+
+  for (r in 1:nruns) {
+    for (i in 1:maxiter) {
+      beta.old <- beta
+
+      # Take gradient descent step
+      grad <- -t(X) %*% (y - X %*% beta)
+      beta <- beta - grad/L
+
+      # Set to zero all but the top k
+      ids <- order(abs(beta), decreasing=TRUE)
+      beta[-ids[1:k]] <- 0
+
+      # Perform least squares polishing, if we are asked to
+      if (polish) beta[ids[1:k]] <- lsfit(X[,ids[1:k]], y, int = FALSE)$coef
+
+      # Stop if the relative difference in coefficients is small enough
+      if (norm(beta - beta.old) / max(norm(beta), 1) < tol) break
+    }
+
+    # Compute the criterion for the current coefficients, compare to the
+    # best so far
+    cur.crit <- sum((y - X %*% beta)^2)
+    if (cur.crit < best.crit) {
+      best.crit <- cur.crit
+      best.beta <- beta
+    }
+
+    # Start the next run off at a random spot (particular choice matches
+    # Rahul's Matlab code)
+    beta <- beta0 + 2 * runif(p) * max(abs(beta0), 1)
+    beta[c(graphLasso$wi[, , bestgLasso]) == 0] <- 0
+  }
+
+  obj <- 0.5*norm(X %*% best.beta - y, type = "2")**2
+
+  return(list("bm" = best.beta, "gm" = obj))
+}
+
+getSigma <- function(ASigma){
+
+  p <- dim(ASigma)[1]
+
+  # Retrieve diagonal elements of Sample covariance matrix
+  diagInd <- seq(1, p, by = sqrt(p) + 1)
+  diagElements <- sapply(diagInd, function(x, ASigma){return(ASigma[x,x] / 2)}, ASigma)
+
+  # Retrieve the entire Sample covariance matrix
+  Sigma <- ASigma[1:sqrt(p), seq(1, p, by = sqrt(p))]
+  diag(Sigma) <- diagElements
+  Sigma[1, 2:sqrt(p)] <- Sigma[1, 2:sqrt(p)] / 2
+
+  return(Sigma)
+  }

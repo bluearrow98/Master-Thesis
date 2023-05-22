@@ -5,54 +5,57 @@ library(parallel)
 library(doParallel)
 library(bestsubset)
 source("helpFunctions.R")
+source("modelSelection.R")
+source("metrics.R")
 source("discreteFirstOrderAlgos.R")
 
 # Parallel settings
 numCores = makeCluster(detectCores())
 registerDoParallel(numCores)
-clusterExport(numCores,c("bs"))
-clusterEvalQ(numCores,source("helpFunctions.R"))
-clusterEvalQ(numCores,source("discreteFirstOrderAlgos.R"))
-clusterEvalQ(numCores,library(glmnet))
-clusterEvalQ(numCores,library(gurobi))
+clusterExport(numCores, c("bs"))
+clusterEvalQ(numCores, source("helpFunctions.R"))
+clusterEvalQ(numCores, source("modelSelection.R"))
+clusterEvalQ(numCores, source("metrics.R"))
+clusterEvalQ(numCores, source("discreteFirstOrderAlgos.R"))
+clusterEvalQ(numCores, library(glmnet))
+clusterEvalQ(numCores, library(gurobi))
 
 # Signal size
-p <- 5
+p <- c(5)
+
+# Sample sizes
+n <- c(1000)
 
 # Number of signals
 N <- 100
-
 
 # Method for best subset
 method <- "bs"
 
 set.seed(99)
 
+# Get all signals
+signals <- lapply(p, function(x) {
+  lapply(seq(1, N), getSignals, x)
+})
 
-for (s in p) {
+signals <- lapply(1 : length(signals), function(x) {
+  return(lapply(n, function(y) {
+    return(setupProblems(signals[[x]], p[x], y))
+  }))
+})
 
-  # Number of data to be sampled
-  n <- c(100, 200, 500, 1000, 5000, 10000, 100000, Inf)
+for (s in 1:length(p)) {
 
+  for (d in 1:length(n)) {
 
-  for (d in n) {
+    elapsedTime <- system.time(results <-
+      recoverDriftMatrix(signals[[s]][[d]], p[s], n[d], method))
 
-    elapsedTime <- system.time({bestResult = lapply(seq(1, N), recoverDriftMatrix,
-                                                    p = s, n = d,
-                                                    method = method)})
+    bestResult <- saveResults(signals[[s]][[d]], results,
+      p[s], n[d], elapsedTime)
 
-    if (method != "tLasso") {
-      accMax = max(unlist(lapply(bestResult, function(x) {x$acc})))
-      tprAvg = mean(unlist(lapply(bestResult, function(x) {x$tpr})))
-      fprAvg = mean(unlist(lapply(bestResult, function(x) {x$fpr})))
-      f1scoreAvg = mean(unlist(lapply(bestResult, function(x) {x$f1score})))
-      aucrocAvg = mean(unlist(lapply(bestResult, function(x) {x$aucroc})))
-      aucprAvg = mean(unlist(lapply(bestResult, function(x) {x$aucpr})))
-      timeAvg = elapsedTime / N
-    }
-
-    save(accMax, tprAvg, fprAvg, f1scoreAvg, timeAvg, aucrocAvg, aucprAvg,
-         file = paste0(getwd(),"/../Results/SimResults-10 point grid/withBIC_Obj_proj_grad_oneEdge/",d,"_",s,"_res.RData"))
+    getMetrics(signals[[s]][[d]], bestResult, p[s], n[d])
 
   }
 }

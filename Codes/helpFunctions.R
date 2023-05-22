@@ -6,8 +6,8 @@ library(doParallel)
 library(gurobi)
 
 stabSignal <- function(p){
-  k = sample(c(1,2,3,4), size = 1)
-  M = matrix(rnorm(p**2) * rbern(p ** 2,prob = 1 / p), nrow = p)
+  k = 0.05 * p
+  M = matrix(rnorm(p**2) * rbern(p ** 2, prob = k / p), nrow = p)
   nonDiagAbsSum = sum(abs(M)) - sum(diag(abs(M)))
   diag(M) = - nonDiagAbsSum - abs(rnorm(p))
   return(M)
@@ -15,11 +15,31 @@ stabSignal <- function(p){
 
 
 getPopCovar <- function(M, C){
+
   p <- dim(M)[1]
-  Sigma <- solve(kronecker(diag(p), M) + kronecker(M, diag(p)), -c(C))
+  AM <- kronecker(diag(p), M) + kronecker(M, diag(p))
+  Sigma <- - ginv(AM) %*% c(C)
   Sigma <- matrix(Sigma, nrow = p)
 
   return(Sigma)
+}
+
+getSignals <- function(i, p) {
+
+  set.seed(i)
+
+  # True signal and Volatility matrix
+  M_star <- stabSignal(p)
+  trueSparsity <- (M_star != 0)
+  C <- diag(runif(p, min = 0.2))
+
+  # True number of subsets
+  k0 <- sum(trueSparsity)
+
+  # Population covariance
+  Sigma_star <- getPopCovar(M_star, C)
+
+  return(list(M = M_star, C = C, Sigma = Sigma_star, gt = trueSparsity, k0 = k0))
 }
 
 invCov <- function(Mvec,Cvec){
@@ -32,9 +52,17 @@ invCov <- function(Mvec,Cvec){
 
   # Get the recovered covariance matrix
   Sigma <- getPopCovar(M, C)
-
+  
   # Find the inverse using decomposition
   E <- eigen(Sigma)
+  if (sum(any(Re(eigen(Sigma)$values) == 0))) {
+    if (any(E$values != 0)) {
+      E$values[E$values == 0] <- 1e-5 * min(E$values[E$values != 0])
+    }else {
+      print(M)
+      E$values[E$values == 0] <- 1e-5
+    }
+  }
   Lambda <- diag(E$values^(-1))
   Gamma <- E$vectors
   invCov <- Gamma %*% Lambda %*% t(Gamma)
@@ -44,14 +72,14 @@ invCov <- function(Mvec,Cvec){
 
 sampleX <- function(n,Sigma){
   X = mvrnorm(n, mu = rep(0, dim(Sigma)[1]), Sigma)
-  return (X)
+  return(X)
 }
 
 getDataCovar <- function(X){
   n = dim(X)[1]
   Sigma = t(X) %*% X / n
   
-  return (Sigma)
+  return(Sigma)
 }
 
 standardize <- function(X){
@@ -63,7 +91,10 @@ standardize <- function(X){
   return (X_shift)
 }
 
-applyBS <- function(j, ASigma, vecC) {
+applyBS <- function(i, j, signals) {
+
+  ASigma <- signals[[i]]$ASigma
+  vecC <- signals[[i]]$vecC
 
   n <- dim(ASigma)[1]
   p <- length(vecC)
@@ -84,7 +115,7 @@ applyBS <- function(j, ASigma, vecC) {
 
 }
 
-customBS <- function(X, y, k, polish = TRUE){
+customBS <- function(X, y, k, polish = TRUE) {
 
   n <- dim(X)[1]
   p <- dim(X)[2]
@@ -94,84 +125,86 @@ customBS <- function(X, y, k, polish = TRUE){
   M_p <- algo2Sol$bm
 
   ## MIO Formulation
-
-  Mu <- 2 * norm(as.matrix(M_p), type = "i")
-
+  d_ind <- seq(1, p, by = sqrt(p) + 1)
+  Mu_d <- 2 * norm(as.matrix(M_p[d_ind]), type = "i")
+  Mu_nd <- 2 * norm(as.matrix(M_p[-d_ind]), type = "i")
 
   ## Initial guess (Not used for cold start)
   z0 <- rep(0,p)
   z0[M_p != 0] <- 1
 
+  diagA <- rep(-Mu_nd, p)
+  diagA[d_ind] <- -Mu_d
+
   model <- list()
   params <- list()
   if (p < n) {
     # Warm-start model creation (Eq 2.5)
-    model$A <- spMatrix(nrow = 2, ncol = 2 * p + 1, i = c(rep(1, p), 2),
-                       j = c(seq(p + 1, 2 * p + 1)),
-                       x = c(rep(1, p + 1)))
-    # model$A = spMatrix(nrow = 2*p+1, ncol = 2*p,
-    #                    i= c(rep(seq(1,p),2),rep(seq(p+1,2*p),2),rep(2*p+1,p)),
-    #                    j=c(rep(seq(1,2*p),2),seq(p+1,2*p)),
-    #                    x=c(rep(-1,p),rep(-Mu,p),rep(1,p),rep(-Mu,p),rep(1,p)))
-    model$Q <- spMatrix(nrow = 2 * p + 1,ncol = 2 * p + 1,
+    model$A <- spMatrix(nrow = 2 + 2 * p, ncol = 2 * p, i = c(rep(1, p), rep(2, sqrt(p)), rep(seq(3, 2 + p), 2), rep(seq(2 + p + 1, 2 + 2 * p), 2)),
+                       j = c(seq(p + 1, 2 * p), seq(p + 1, 2 * p, by = sqrt(p) + 1), rep(seq(1, 2 * p), 2)),
+                       x = c(rep(1, p + sqrt(p)), rep(1, p), diagA, rep(-1, p), diagA))
+    model$Q <- spMatrix(nrow = 2 * p,ncol = 2 * p,
                         i = c(rep(seq(1, p), each = p)),
                         j = c(rep(seq(1, p), p)), x = c(0.5 * t(X) %*% X))
-    model$obj <- c(-t(X) %*% y, rep(0, p + 1))
-    model$ub <- c(rep(Mu, p), rep(1, p), Inf)
-    model$lb <- c(rep(-Mu, p), rep(0, p), 0)
-    model$rhs <- c(p - k, Mu)
-    model$sense <- c(">=", "<=")
-    model$vtype <- c(rep("C", p), rep("B", p), "C")
-    model$start <- c(M_p, 1-z0, norm(as.matrix(M_p), type = "i"))
-    model$genconnorm <- list(list(resvar = 2 * p + 1,
-                                 vars = c(seq(1, p)),
-                                 which = Inf))
+    model$obj <- c(-t(X) %*% y, rep(0, p))
+    model$ub <- c(rep(Mu_d, p), rep(1, p))
+    model$ub[-c(d_ind, seq(p + 1, 2 * p))] <- Mu_nd
+    model$lb <- c(rep(-Mu_d, p), rep(0, p))
+    model$lb[-c(d_ind, seq(p + 1, 2 * p))] <- -Mu_nd
+    model$rhs <- c(k, sqrt(p), rep(0, 2 * p))
+    model$sense <- c("<=", "=", rep("<=", 2 * p))
+    model$vtype <- c(rep("C", p), rep("B", p))
+    model$start <- c(M_p, z0)
 
     ## Creating SOS constraints
-    sos <- list()
-    for (j in 1:p){
-      sos[[j]] <- list()
-      sos[[j]]$type <- 1
-      sos[[j]]$index <- c(j, (p + j))
-      sos[[j]]$weights <- c(1, 2)
-    }
-    model$sos <- sos
+    # sos <- list()
+    # for (j in 1:p){
+    #   sos[[j]] <- list()
+    #   sos[[j]]$type <- 1
+    #   sos[[j]]$index <- c(j, (p + j))
+    #   sos[[j]]$weights <- c(1, 2)
+    # }
+    # model$sos <- sos
 
   }else{
     # Warm-start model creation (Eq 2.6)
-    Mu_zeta <- max(colSums(apply(abs(X), 1, sort,
-                    decreasing=TRUE)[, 1:k, drop = FALSE])) * Mu
-    model$A <- spMatrix(nrow = n + 2, ncol = n + 2 * p,
-                       i = c(seq(1, n), rep(seq(1, n), each = p), rep(n + 1, p), rep(n + 2, sqrt(p))),
-                       j = c(seq(1, n), rep(seq(n+1, n+p), n), seq(n + p + 1, n + 2 * p), seq(n + p + 1, n + 2 * p, by = sqrt(p) + 1)),
-                       x = c(rep(1, n), c(-t(X)), rep(1, p), rep(1, sqrt(p))))
+    M_zeta <- max(colSums(apply(abs(X), 1, sort,
+                    decreasing=TRUE)[, 1:k, drop = FALSE])) * Mu_d
+    model$A <- spMatrix(nrow = n + 2 + 2 * p, ncol = n + 2 * p,
+                       i = c(seq(1, n), rep(seq(1, n), each = p), rep(n + 1, p), rep(n + 2, sqrt(p)), rep(seq(n + 3, n + 2 + p), 2), rep(seq(n + 3 + p, n + 2 + 2 * p),2)),
+                       j = c(seq(1, n), rep(seq(n+1, n+p), n), seq(n + p + 1, n + 2 * p), seq(n + p + 1, n + 2 * p, by = sqrt(p) + 1), rep(seq(n + 1, n + 2 * p), 2)),
+                       x = c(rep(1, n), c(-t(X)), rep(1, p), rep(1, sqrt(p)), rep(1, p), diagA, rep(-1, p), diagA))
     model$Q <- spMatrix(nrow = n + 2 * p, ncol = n + 2 * p,
                        i = seq(1, n), j = seq(1, n), x = rep(0.5, n))
     model$obj <- c(rep(0, n), -t(X) %*% y, rep(0, p))
-    model$ub <- c(rep(Mu_zeta, n), rep(Mu, p), rep(1, p))
-    model$lb <- c(rep(-Mu_zeta, n), rep(-Mu, p), rep(0, p))
-    model$rhs <- c(rep(0, n), p - k, 0)
-    model$sense <- c(rep("=", n), ">=", "=")
+    model$ub <- c(rep(M_zeta, n), rep(Mu_d, p), rep(1, p))
+    model$ub[-c(seq(1, n), n + d_ind, seq(n + p + 1, n + 2 * p))] <-
+      c(rep(Mu_nd, p - sqrt(p)))
+    model$lb <- c(rep(-M_zeta, n), rep(-Mu_d, p), rep(0, p))
+    model$lb[-c(seq(1, n), n + d_ind, seq(n + p + 1, n + 2 * p))] <-
+      c(rep(-Mu_nd, p - sqrt(p)))
+    model$rhs <- c(rep(0, n), k, sqrt(p), rep(0, 2 * p))
+    model$sense <- c(rep("=", n), "<=", "=", rep("<=", 2 * p))
     model$vtype <- c(rep("C", n), rep("C", p), rep("B", p))
-    model$start <- c(X %*% M_p, M_p, 1 - z0)
-
+    model$start <- c(X %*% M_p, M_p, z0)
 
     ## Creating SOS constraints
-    sos <- list()
-    for (j in 1:p){
-      sos[[j]] <- list()
-      sos[[j]]$type <- 1
-      sos[[j]]$index <- c((n + j), (n + p + j))
-      sos[[j]]$weights <- c(1, 2)
-    }
-    model$sos <- sos
+    # sos <- list()
+    # for (j in 1:p){
+    #   sos[[j]] <- list()
+    #   sos[[j]]$type <- 1
+    #   sos[[j]]$index <- c((n + j), (n + p + j))
+    #   sos[[j]]$weights <- c(1, 2)
+    # }
+    # model$sos <- sos
 
   }
 
   ## Parameters for Gurobi optimization
-  params$OutputFlag <- 0
+  params$OutputFlag <- 1
   params$timeLimit <- 100
   params$NonConvex <- 2
+  params$MIPGap <- 0.01
 
   result <- gurobi(model, params)
 
@@ -181,246 +214,214 @@ customBS <- function(X, y, k, polish = TRUE){
   return(result)
 }
 
-recoverDriftMatrix <- function(i, p, n, method) {
-
-set.seed(i)
-
-# True signal and Volatility matrix
-M_star <- stabSignal(p)
-trueSparsity <- (M_star != 0)
-C <- diag(runif(p))
-# Population covariance
-Sigma_star <- getPopCovar(M_star, C)
-# Sampled data and covariance
-if (n == Inf) {
-  Sigma <- Sigma_star
-}else {
-  X <- sampleX(n, Sigma_star)
-  Sigma <- getDataCovar(X)
-}
-# Commutaion matrix that transforms column vetorization of
-# a matrix to its row vectorization
-KPermute <- spMatrix(nrow = p**2, ncol = p**2, i = c(seq(1, p**2)),
-                    j = c(sapply(seq(1, p),
-                          function(x) {seq(x, p**2, by = p)})),
-                    x = c(rep(1, p**2)))
-# Data matrix for regression
-ASigma <- as.matrix(kronecker(Sigma, diag(p)) +
-                    kronecker(diag(p), Sigma) %*% KPermute)
-vecC <- c(C)
-
-# True number of best subset
-k0 <- sum(M_star != 0)
-
-# Storing the best result after hyperparameter search
-bestResult <- list()
-
-if (method != "tLasso") {
+recoverDriftMatrix <- function(signals, p, n, method,
+                                k = floor(seq(p, p ** 2, length.out = 10))) {
 
   if (method == "bs") {
-    # Number of best subset to select (min. val set to p -
-    # Atleast diagonal should be present)
-    # k = seq(k0-k0%/%2,k0 + k0%/%2)
-    k <- floor(seq(p, p**2, length.out = 10))
-
-
     # resultBS <- lapply(k, applyBS, ASigma, vecC)
-    foreach(i = k) %dopar% {applyBS(i, ASigma, vecC)} -> resultBS
+    resultBS <- foreach(i = 1:length(signals)) %:%
+                  foreach(j = k) %dopar% {
+                    applyBS(i, j, signals)
+                  }
 
-    betas <- sapply(resultBS, function(x) {return(x$beta)})
+    # Check if all solutions obtained are feasible
+    feasibleResults <- lapply(resultBS, checkInfeasibility, k)
 
-    # Choose the k's for which M is diagonal
-    k.diagInd <- which(apply(betas, 2, is.diagonal, p))
-    betas <- betas[, k.diagInd, drop = FALSE]
+    resultBS <- lapply(feasibleResults, function(z) {
+          return(z$results)
+    })
+    # Get solutions
+    betas <- lapply(resultBS, sapply, function(x) {
+          return(x$beta)
+          })
 
-    objvals <- sapply(resultBS, function(x) {return(x$objval)})
+    objvals <- lapply(resultBS, sapply, function(x) {
+          return(x$objval)
+          })
+
 
   }else if (method == "lasso") {
-    # Lasso
-    penalty <- rep(1, p**2)
-    penalty[seq(1, p**2, by = p + 1)] <- 0
+      # Lasso
+      penalty <- rep(1, p ** 2)
+      penalty[seq(1, p ** 2, by = p + 1)] <- 0
 
-    initGrid <- seq(10, 10^-5, length.out = 100)
-    coarseLasso <- glmnet(ASigma, -vecC, intercept = FALSE, alpha = 1,
-                            standardize = TRUE, penalty.factor = penalty,
-                            lambda = initGrid)
-    # Find min lambda such that M is diagonal
-    lambda <- min(initGrid[(colSums(penalty * (coarseLasso$beta!=0)) == 0 &
-                              colSums((1 - penalty) *
-                              (coarseLasso$beta!=0)) == p)])
-    fineGrid <- seq(lambda, lambda / 10^4, length.out = 100)
-    fineLasso <- glmnet(ASigma, -vecC, intercept = FALSE, alpha = 1,
-                        standardize = TRUE, penalty.factor = penalty,
-                        lambda = fineGrid)
+      initGrid <- seq(10, 10^-5, length.out = 100)
+      coarseLasso <- foreach(i = 1:length(signals)) %dopar% {
+                        glmnet(signals[[i]]$ASigma, -signals[[i]]$vecC, 
+                          intercept = FALSE, alpha = 1,
+                          standardize = TRUE, penalty.factor = penalty,
+                          lambda = initGrid)
+                      }
 
-    betas <- fineLasso$beta
+      # Find min lambda such that M is diagonal
+      lambdas <- lapply(coarseLasso, function(z) {
+            return(min(initGrid[(colSums(penalty * (z$beta != 0)) == 0 &
+          colSums((1 - penalty) * (z$beta != 0)) == p)]))
+            })
+      fineGrid <- lapply(lambdas, function(z) {
+            return(seq(z, z / 10^4, length.out = 100))
+            })
+      fineLasso <- foreach(i = 1:length(signals)) %dopar% {
+                        glmnet(signals[[i]]$ASigma, -signals[[i]]$vecC, 
+                          intercept = FALSE, alpha = 1,
+                          standardize = TRUE, penalty.factor = penalty,
+                          lambda = fineGrid[[i]])
+                      }
+      # Get solution                    }
+      betas <- lapply(fineLasso, function(z) {
+            return(z$beta)
+            })
 
-    # Get objective values, if necessary
-    objvals <- apply(betas, 2, function(x){norm(ASigma %*% x + vecC, type = "2")})
+      # Get objective values, if necessary
+      objvals <- lapply(1:length(betas), function(i) {
+            return(apply(betas[[i]], 2, function(z){
+              norm(signals[[i]]$ASigma %*% z + signals[[i]]$vecC, type = "2")}))
+            })
+
+    }
+
+    return(betas)
+}
+
+problem <- function(signal, p, n){
+
+  # Get the population covariance matrix and the Volatility matrix
+  C <- signal$C
+  Sigma_star <- signal$Sigma
+
+
+  # Sampled data and covariance
+  if (n == Inf) {
+    Sigma <- Sigma_star
+  }else {
+    X <- sampleX(n, Sigma_star)
+    Sigma <- getDataCovar(X)
   }
 
-  # Choose the best drift matrix based on posterior model probabilities
-  Siginv_comp <- apply(betas, 2, invCov, vecC)
-  bic_scores <- apply(Siginv_comp, 2, bic_score, Sigma, n)
-  posterior_prob <- postprb(bic_scores)
-  bestM <- betas[, which.max(posterior_prob)]
+  # Commutaion matrix that transforms column vetorization of
+  # a matrix to its row vectorization
+  KPermute <- spMatrix(nrow = p**2, ncol = p**2, i = c(seq(1, p**2)),
+                      j = c(sapply(seq(1, p),
+                            function(x) {seq(x, p**2, by = p)})),
+                      x = c(rep(1, p**2)))
+  # Data matrix for regression
+  ASigma <- as.matrix(kronecker(Sigma, diag(p)) +
+                      kronecker(diag(p), Sigma) %*% KPermute)
+  vecC <- c(C)
 
-  # Choose the best drift matrix based on objective values
-  # bestM <- betas[, which.min(objvals)]
+  signal$ASigma <- ASigma
+  signal$vecC <- vecC
+  signal$p <- p
+  signal$n <- n
 
-  # Save the best result
-  bestk <- sum(bestM!=0)
-  bestResult$M_star <- M_star
-  bestResult$M_comp <- bestM
-  bestResult$bestk <- bestk
-  bestResult$k <- k0
+  return(signal)
 
-  # Evaluate Metrics
-
-  bestResult$acc <- acc(bestM, trueSparsity)
-  bestResult$tpr <- tpr(bestM, trueSparsity)
-  bestResult$fpr <- fpr(bestM, trueSparsity)
-  bestResult$f1score <- f1score(bestM, trueSparsity)
-  bestResult$aucroc <- AUCROC(bestM, trueSparsity)
-  bestResult$aucpr <- AUCPR(bestM, trueSparsity)
-
-  return(bestResult)
-
-}else {
-  # Save Dataset to be later loaded in Matlab
-writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/", n, "_", p, "/X_",
-                      n, "_", p, "_", i, ".mat"), X = ASigma)
-writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/", n, "_", p, "/y_",
-                      n, "_", p, "_", i, ".mat"), y = -vecC)
-writeMat(con = paste0("D:/TUM/Master-Thesis/Dataset/", n, "_", p, "/M_",
-                      n, "_", p, "_", i, ".mat"), M = M_star)
-}
 }
 
-tp <- function(comp,gt){return (length(intersect(which(comp!=0),which(gt!=0))))}
-fp <- function(comp,gt){return (length(setdiff(which(comp!=0),which(gt!=0))))}
-tn <- function(comp,gt){return (length(intersect(which(comp==0),which(gt==0))))}
-fn <- function(comp,gt){return (length(setdiff(which(comp==0),which(gt==0))))}
-acc <- function(comp,gt){
-  accuracy <- (tp(comp,gt) + tn(comp,gt)) /(tp(comp,gt) + tn(comp,gt) 
-                                            + fp(comp,gt) + fn(comp,gt))
-  return(accuracy)
-  }
-tpr <- function(comp,gt){
-  return(tp(comp,gt)/(tp(comp,gt) + fn(comp,gt)))
-}
-fpr <- function(comp,gt){
-  return(fp(comp,gt)/(fp(comp,gt) + tn(comp,gt)))
-}
-f1score <- function(comp,gt){
-  return(tp(comp,gt)/(tp(comp,gt) + 0.5*(fp(comp,gt) + fn(comp,gt))))
-}
+setupProblems <- function(signals, p, n) {
 
-sigmoid <- function(x){
-  return(exp(abs(x)) / (1 + exp(abs(x))))
-}
-precision <- function(comp,gt){
-  return(tp(comp,gt) / (tp(comp,gt) + fp(comp,gt)))
-}
+  signals <- lapply(signals, problem, p, n)
 
-
-AUCPR <- function(comp,gt){
-
-  comp <- sigmoid(abs(comp))
-
-  x = list()
-  comp_sort <- c(0,sort(comp))
-  for (i in 1:length(comp_sort)) {
-    comp_i <- (comp > comp_sort[i])
-    x$precision[i] <- precision(comp_i, gt)
-    if (is.nan(x$precision[i])) x$precision[i] <- 1
-    x$recall[i] <- tpr(comp_i,gt)
-    if (is.nan(x$recall[i])) x$recall[i] <- 1
-  }
-
-  temp <- 0
-  n <- length(x$precision)
-  for (i in 1:(n-1)){
-    ## trapezoidal quadrature rule
-    temp <- temp + (x$precision[i + 1] + x$precision[i]) *
-      (x$recall[i] - x$recall[i + 1]) / 2
-  }
-
-
-  return(temp)
-}
-
-AUCROC <- function(comp,gt) {
-
-  comp <- sigmoid(abs(comp))
-  x = list()
-  comp_sort <- c(0,sort(comp))
-  for (i in 1:length(comp_sort)) {
-    comp_i <- (comp > comp_sort[i])
-    x$tpr[i] <- tpr(comp_i,gt)
-    if (is.nan(x$tpr[i])) x$tpr[i] <- 1
-    x$fpr[i] <- fpr(comp_i,gt)
-    if (is.nan(x$fpr[i])) x$fpr[i] <- 1
-  }
-
-  temp <- 0
-  n <- length(x$tpr)
-  for (i in 1:(n-1)){
-    ## trapezoidal quadrature rule
-    temp <- temp + (x$tpr[i + 1] + x$tpr[i]) *
-      (x$fpr[i] - x$fpr[i + 1]) / 2
-  }
-  return(temp)
-}
-
-# Compute BIC Scores 
-bic_score <- function(K, S, n){
-  if (is.matrix(K)){
-    # do nothing
-  }else{
-    K <- matrix(K, nrow = sqrt(length(K)))
-  }
-  if (n == Inf) n <- 10^10
-  bic <- n*(-determinant(K)$modulus + sum(diag(S%*%K))) + sum(unique(K) != 0) * log(n)
-
-  return(bic)
-}
-
-# Compute extended BIC scores
-ebic_score <- function(K, S, n, gamma){
-  if (is.matrix(K)){
-    # do nothing
-  }else{
-    K <- matrix(K,nrow = sqrt(length(K)))
-  }
-  if (n==Inf) n <- 10^10
-  p <- dim(K)[1]
-  ebic = n*(-determinant(K)$modulus + sum(diag(S%*%K))) + sum(unique(K)!=0)*log(n) + 4*gamma*sum(unique(K)!=0)*log(p)
-
-  return(ebic)
-}
-
-aic_score <- function(K, S, n) {
-  if (is.matrix(K)){
-    # do nothing
-  }else{
-    K <- matrix(K,nrow = sqrt(length(K)))
-  }
-  if (n==Inf) n <- 10^10
-  aic <- n * (-determinant(K)$modulus + sum(diag(S %*% K))) + 2 * sum(unique(K)!=0)
-
-  return(aic)
-}
-
-# Posterior model probability
-postprb <- function(scores) {
-  weights <- -scores / 2
-  post_prb <- sapply(weights, function(x) {x / sum(weights)})
+  return(signals)
 }
 
 # Check if matrix is stable
 is.diagonal <- function(Mvec, p) {
 
   diag_ind <- seq(1, p ** 2, by = p + 1)
-  return(sum(Mvec[diag_ind] != 0) == p)
+  # M <- matrix(Mvec, nrow = p)
+  # AM <- kronecker(diag(p), M) + kronecker(M, diag(p))
+  # lambda <- eigen(AM)$values
+  return(sum(abs(Mvec[diag_ind]) >= 1e-3) == p)
+}
+
+checkInfeasibility <- function(results, k){
+  #  Get the indices at which we get a feasible solution
+  fInd <- which(sapply(results,
+                function(x){return(!is.null(x$mipgap) & x$mipgap <= 0.01)}))
+
+  # Keep only the feasible results
+  resultsFeasible <- results[fInd]
+
+  feasibleK <- k[fInd]
+
+  return(list(fInd = fInd, results = resultsFeasible, k = feasibleK))
+}
+
+saveResults <- function(signals, results, p, n, elapsedTime) {
+
+      betas <- results
+
+      # Choose the best drift matrix based on posterior model probabilities
+      Siginv_comp <- lapply(1:length(betas), function(x) {
+        return(apply(betas[[x]], 2, invCov, signals[[x]]$vecC))
+        })
+      # bic_scores <- lapply(1:length(betas), function(x) {
+      # return(apply(betas[[x]], 2, lyap_bic, signals[[x]]$vecC, n))
+      # })
+      bic_scores <- lapply(1:length(betas), function(x) {
+        return(apply(Siginv_comp[[x]], 2, aic_score, signals[[x]]$Sigma, n))
+        }) 
+      posterior_prob <- lapply(bic_scores, postprb)
+      bestM <- lapply(1:length(betas), function(x) {
+        return(b <- betas[[x]][, which.max(posterior_prob[[x]])])
+      })
+
+      # Choose the best drift matrix based on objective values
+      # bestM <- betas[, which.min(objvals)]
+
+      bestk <- lapply(bestM, function(x) {return(sum(x != 0))})
+      bestResult <- lapply(1:length(signals), function(x) {
+        return(list(M_star = signals[[x]]$M, M_comp = bestM[[x]],
+        bestk = bestk[[x]], k = signals[[x]]$k,
+        t = elapsedTime))
+      })
+
+      # Save the results
+      save(bestResult,
+      file = paste0(getwd(), "/../Results/test/", n, "_", p, "_res.RData"))
+
+      # Return, if required for further calculation of metrics
+      return(bestResult)
+}
+
+getMetrics <- function(signals, bestResult, p, n){
+
+    # Evaluate Metrics
+    diag <- seq(1, p ** 2, by = p + 1)
+    bestResult <- apply(as.matrix(1:length(signals)), 1,  function(x) {
+      bestResult[[x]]$acc <- acc(bestResult[[x]]$M_comp[-diag],
+        signals[[x]]$gt[-diag])
+      bestResult[[x]]$tpr <- tpr(bestResult[[x]]$M_comp[-diag],
+        signals[[x]]$gt[-diag])
+      if (is.nan(bestResult[[x]]$tpr)) bestResult[[x]]$tpr <- 1
+      bestResult[[x]]$fpr <- fpr(bestResult[[x]]$M_comp[-diag],
+        signals[[x]]$gt[-diag])
+      if (is.nan(bestResult[[x]]$fpr)) bestResult[[x]]$fpr <- 1
+      bestResult[[x]]$f1score <- f1score(bestResult[[x]]$M_comp[-diag],
+        signals[[x]]$gt[-diag])
+      if (is.nan(bestResult[[x]]$f1score)) bestResult[[x]]$f1score <- 1
+      bestResult[[x]]$aucroc <- AUCROC(bestResult[[x]]$M_comp[-diag],
+        signals[[x]]$gt[-diag])
+      bestResult[[x]]$aucpr <- AUCPR(bestResult[[x]]$M_comp[-diag],
+        signals[[x]]$gt[-diag])
+      return(bestResult[[x]])
+    })
+
+    res <- bestResult
+
+    # Get average over all signals
+    bestResult$accMax <- max(unlist(lapply(res, function(x) {x$acc})))
+    bestResult$tprAvg <- mean(unlist(lapply(res, function(x) {x$tpr})))
+    bestResult$fprAvg <- mean(unlist(lapply(res, function(x) {x$fpr})))
+    bestResult$f1scoreAvg <- mean(unlist(lapply(res, function(x) {x$f1score})))
+    bestResult$aucrocAvg <- mean(unlist(lapply(res, function(x) {x$aucroc})))
+    bestResult$aucprAvg <- mean(unlist(lapply(res, function(x) {x$aucpr})))
+    bestResult$timeAvg <- res[[1]]$t / length(signals)
+
+    # Save the results
+    save(bestResult,
+      file = paste0(getwd(), "/../Results/", "ResultsWithRegEdge",
+        "/completeResultsWithDiagMetric_edgeProb5/", n, "_", p, "_res.RData"))
+
 }
