@@ -1,4 +1,3 @@
-source("helpFunctions.R")
 library(glasso)
 
 # Discrete First-order Algorithm 1 Implementation
@@ -237,8 +236,10 @@ proj_grad_oneEdge <- function(X, y, k, nruns = 50, maxiter = 1000, tol = 1e-4, p
 one_edge_ini <- function(beta0, p){
   # Get the diagonal indices
   diag_ind <- seq(1, p, by = sqrt(p) + 1)
+  # Get non-zero non-diagonal indices
+  nzero_ind <- setdiff(seq(1,p), diag_ind)
   # Sample a random index from the off-diagonal
-  edge_ind <- sample(seq(1, p)[-diag_ind], 1)
+  edge_ind <- sample(nzero_ind, 1)
   # Assign everything else as zero
   beta0[-c(diag_ind, edge_ind)] <- 0
 
@@ -247,14 +248,14 @@ one_edge_ini <- function(beta0, p){
 
 one_edge_next <- function(beta0, diag_ind, p){
   # Start with random number of edges
-  randEdge <- 2 * runif(p) * max(abs(beta0), 1)
+  randEdge <- 2 * runif(p) * max(abs(beta0[-diag_ind]), 1)
   # Choose a single edge at random out of all
   edge_ind <- sample(seq(1, p)[-diag_ind], 1)
   # Add it to the initial one edge initialized vector
   randEdge[-edge_ind] <- 0
   beta <- beta0 + randEdge
 
-  return(beta0)
+  return(beta)
 }
 
 proj_grad_glasso <- function(X, y, k, nruns = 50, maxiter = 1000, tol = 1e-4, polish = TRUE) {
@@ -338,4 +339,41 @@ getSigma <- function(ASigma){
   Sigma[1, 2:sqrt(p)] <- Sigma[1, 2:sqrt(p)] / 2
 
   return(Sigma)
+  }
+
+  applyLasso <- function(X, y){
+
+    p <- sqrt(dim(X)[1])
+
+    # Lasso
+    penalty <- rep(1, p ** 2)
+    penalty[seq(1, p ** 2, by = p + 1)] <- 0
+
+    initGrid <- seq(10, 10^-5, length.out = 100)
+    coarseLasso <- glmnet(X, y,
+                        intercept = FALSE, alpha = 1,
+                        standardize = FALSE, penalty.factor = penalty,
+                        lambda = initGrid)
+
+    # Find min lambda such that M is diagonal
+    lambda <- min(initGrid[(colSums(penalty * (coarseLasso$beta != 0)) == 0 &
+        colSums((1 - penalty) * (coarseLasso$beta != 0)) == p)])
+
+    fineGrid <- seq(lambda, lambda / 10^4, length.out = 100)
+
+    fineLasso <- glmnet(X, y,
+                        intercept = FALSE, alpha = 1,
+                        standardize = FALSE, penalty.factor = penalty,
+                        lambda = fineGrid)
+
+    # Get solution
+    betas <- fineLasso$beta
+
+    # Get objective values, if necessary
+    objvals <- apply(betas, 2, function(z){
+            norm(X %*% z + y, type = "2")})
+
+    best.beta <- betas[, which.min(objvals)]
+
+    return(list("bm" = best.beta, "gm" = min(objvals)))
   }
