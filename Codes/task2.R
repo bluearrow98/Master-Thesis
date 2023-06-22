@@ -24,13 +24,14 @@ clusterEvalQ(numCores, library(gurobi))
 p <- c(5)
 
 # Sample sizes
-n <- c(1000)
+n <- c(100)
 
 # Number of signals
 N <- 100
 
 # Method for best subset
 method <- "bs"
+methodDir <- "ResultsWith1Edge"
 
 set.seed(99)
 
@@ -50,12 +51,12 @@ for (s in 1:length(p)) {
   for (d in 1:length(n)) {
 
     elapsedTime <- system.time(results <-
-      recoverDriftMatrix(signals[[s]][[d]], p[s], n[d], method))
+      recoverDriftMatrix(signals[[s]][[d]], p[s], method))
 
     bestResult <- saveResults(signals[[s]][[d]], results,
-      p[s], n[d], elapsedTime)
+      p[s], n[d], elapsedTime, methodDir)
 
-    getMetrics(signals[[s]][[d]], bestResult, p[s], n[d])
+    getMetrics(signals[[s]][[d]], bestResult, p[s], n[d], method, methodDir)
 
   }
 }
