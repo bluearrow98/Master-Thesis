@@ -18,7 +18,8 @@ getPopCovar <- function(M, C){
 
   p <- dim(M)[1]
   AM <- kronecker(diag(p), M) + kronecker(M, diag(p))
-  Sigma <- - ginv(AM) %*% c(C)
+  E <- eigen(AM)
+  Sigma <- solve(AM, -c(C))
   Sigma <- matrix(Sigma, nrow = p)
 
   return(Sigma)
@@ -39,9 +40,9 @@ getSignals <- function(i, p) {
   # Population covariance
   Sigma_star <- getPopCovar(M_star, C)
 
-  return(list(M = M_star, C = C, Sigma = Sigma_star, gt = trueSparsity, k0 = k0))
+  return(list(M = M_star, C = C, popSigma = Sigma_star, gt = trueSparsity, k0 = k0))
 }
-
+ 
 invCov <- function(Mvec,Cvec){
   # Get number of variables
   p <- sqrt(length(Mvec))
@@ -55,14 +56,6 @@ invCov <- function(Mvec,Cvec){
   
   # Find the inverse using decomposition
   E <- eigen(Sigma)
-  if (sum(any(Re(eigen(Sigma)$values) == 0))) {
-    if (any(E$values != 0)) {
-      E$values[E$values == 0] <- 1e-5 * min(E$values[E$values != 0])
-    }else {
-      print(M)
-      E$values[E$values == 0] <- 1e-5
-    }
-  }
   Lambda <- diag(E$values^(-1))
   Gamma <- E$vectors
   invCov <- Gamma %*% Lambda %*% t(Gamma)
@@ -76,20 +69,20 @@ sampleX <- function(n,Sigma){
 }
 
 getDataCovar <- function(X){
-  n = dim(X)[1]
-  Sigma = t(X) %*% X / n
+  n <- dim(X)[1]
+  Sigma <- t(X) %*% X / n
   
   return(Sigma)
 }
 
-standardize <- function(X){
-  n = dim(X)[1]
-  p = dim(X)[2]
-  mean = matrix(rep(t(apply(X, 2, function(x) {mean(x)})),n) , ncol = p, byrow = T)
-  X_shift = X - mean
-  X_norm = X_shift%*%diag(1/apply(X_shift, 2, function(x) {norm(x,type = "2")}))
-  return (X_shift)
-}
+# standardize <- function(X){
+#   n = dim(X)[1]
+#   p = dim(X)[2]
+#   mean = matrix(rep(t(apply(X, 2, function(x) {mean(x)})),n) , ncol = p, byrow = T)
+#   X_shift = X - mean
+#   X_norm = X_shift%*%diag(1/apply(X_shift, 2, function(x) {norm(x,type = "2")}))
+#   return (X_shift)
+# }
 
 applyBS <- function(i, j, signals) {
 
@@ -98,7 +91,7 @@ applyBS <- function(i, j, signals) {
 
   n <- dim(ASigma)[1]
   p <- length(vecC)
-  result <- customBS(ASigma, -vecC, j)
+  result <- customBS(ASigma, -vecC, j, polish = FALSE)
 
   # result <- bs(ASigma, -vecC, j, intercept = F,
   #             params = list(NonConvex = 2), form = 2)
@@ -121,13 +114,17 @@ customBS <- function(X, y, k, polish = TRUE) {
   p <- dim(X)[2]
 
   # Discrete First order method
-  algo2time <- system.time(algo2Sol <- proj_grad(X, y, k, polish = polish))
+  algo2time <- system.time(algo2Sol <- proj_grad_oneEdge(X, y, k, polish = polish))
+  # algo2time <- system.time(algo2Sol <- applyLasso(X, y))
   M_p <- algo2Sol$bm
 
   ## MIO Formulation
+  eps <- 1e-3
   d_ind <- seq(1, p, by = sqrt(p) + 1)
   Mu_d <- 2 * norm(as.matrix(M_p[d_ind]), type = "i")
+  if (min(abs(M_p[d_ind])) < 1e-8) Mu_d_upper <- eps else Mu_d_upper <- min(abs(M_p[d_ind])) - eps
   Mu_nd <- 2 * norm(as.matrix(M_p[-d_ind]), type = "i")
+  if (Mu_nd == 0) Mu_nd <- Mu_d
 
   ## Initial guess (Not used for cold start)
   z0 <- rep(0,p)
@@ -147,9 +144,9 @@ customBS <- function(X, y, k, polish = TRUE) {
                         i = c(rep(seq(1, p), each = p)),
                         j = c(rep(seq(1, p), p)), x = c(0.5 * t(X) %*% X))
     model$obj <- c(-t(X) %*% y, rep(0, p))
-    model$ub <- c(rep(Mu_d, p), rep(1, p))
+    model$ub <- c(rep(-Mu_d_upper, p), rep(1, p))
     model$ub[-c(d_ind, seq(p + 1, 2 * p))] <- Mu_nd
-    model$lb <- c(rep(-Mu_d, p), rep(0, p))
+    model$lb <- c(rep(-Mu_d + 1e-6, p), rep(0, p))
     model$lb[-c(d_ind, seq(p + 1, 2 * p))] <- -Mu_nd
     model$rhs <- c(k, sqrt(p), rep(0, 2 * p))
     model$sense <- c("<=", "=", rep("<=", 2 * p))
@@ -177,7 +174,7 @@ customBS <- function(X, y, k, polish = TRUE) {
     model$Q <- spMatrix(nrow = n + 2 * p, ncol = n + 2 * p,
                        i = seq(1, n), j = seq(1, n), x = rep(0.5, n))
     model$obj <- c(rep(0, n), -t(X) %*% y, rep(0, p))
-    model$ub <- c(rep(M_zeta, n), rep(Mu_d, p), rep(1, p))
+    model$ub <- c(rep(M_zeta, n), rep(-Mu_d_upper, p), rep(1, p))
     model$ub[-c(seq(1, n), n + d_ind, seq(n + p + 1, n + 2 * p))] <-
       c(rep(Mu_nd, p - sqrt(p)))
     model$lb <- c(rep(-M_zeta, n), rep(-Mu_d, p), rep(0, p))
@@ -207,25 +204,26 @@ customBS <- function(X, y, k, polish = TRUE) {
   params$MIPGap <- 0.01
 
   result <- gurobi(model, params)
-
+  
   result$algo2Time <- algo2time
   result$algo2Sol <- algo2Sol
 
   return(result)
 }
 
-recoverDriftMatrix <- function(signals, p, n, method,
-                                k = floor(seq(p, p ** 2, length.out = 10))) {
+recoverDriftMatrix <- function(signals, p, method,
+                                k = lapply(1: length(signals), function(x){
+                                  floor(seq(p, p ** 2, length.out = 10))})) {
 
   if (method == "bs") {
     # resultBS <- lapply(k, applyBS, ASigma, vecC)
     resultBS <- foreach(i = 1:length(signals)) %:%
-                  foreach(j = k) %dopar% {
+                  foreach(j = k[[i]]) %dopar% {
                     applyBS(i, j, signals)
                   }
 
     # Check if all solutions obtained are feasible
-    feasibleResults <- lapply(resultBS, checkInfeasibility, k)
+    feasibleResults <- lapply(resultBS, checkMIPGap, k)
 
     resultBS <- lapply(feasibleResults, function(z) {
           return(z$results)
@@ -234,6 +232,9 @@ recoverDriftMatrix <- function(signals, p, n, method,
     betas <- lapply(resultBS, sapply, function(x) {
           return(x$beta)
           })
+    # betas_fix <- lapply(betas, function(x){
+    #   apply(x, 2, fixInvertibility)
+    # })
 
     objvals <- lapply(resultBS, sapply, function(x) {
           return(x$objval)
@@ -287,7 +288,7 @@ problem <- function(signal, p, n){
 
   # Get the population covariance matrix and the Volatility matrix
   C <- signal$C
-  Sigma_star <- signal$Sigma
+  Sigma_star <- signal$popSigma
 
 
   # Sampled data and covariance
@@ -307,12 +308,16 @@ problem <- function(signal, p, n){
   # Data matrix for regression
   ASigma <- as.matrix(kronecker(Sigma, diag(p)) +
                       kronecker(diag(p), Sigma) %*% KPermute)
+
+  # Vectorize volatility matrix for regression
   vecC <- c(C)
 
   signal$ASigma <- ASigma
-  signal$vecC <- vecC
+  signal$Sigma <- Sigma
   signal$p <- p
   signal$n <- n
+  signal$X <- X
+  signal$vecC <- vecC
 
   return(signal)
 
@@ -325,7 +330,7 @@ setupProblems <- function(signals, p, n) {
   return(signals)
 }
 
-# Check if matrix is stable
+# Check for small diagonal entries matrices
 is.diagonal <- function(Mvec, p) {
 
   diag_ind <- seq(1, p ** 2, by = p + 1)
@@ -335,10 +340,15 @@ is.diagonal <- function(Mvec, p) {
   return(sum(abs(Mvec[diag_ind]) >= 1e-3) == p)
 }
 
-checkInfeasibility <- function(results, k){
+# Accept results only with an MIP gap of less than 1 % 
+checkMIPGap <- function(results, k){
   #  Get the indices at which we get a feasible solution
   fInd <- which(sapply(results,
-                function(x){return(!is.null(x$mipgap) & x$mipgap <= 0.01)}))
+                function(x){if(!is.null(x$mipgap)) {
+                  return(x$mipgap <= 0.05)
+                }else{
+                  return(FALSE)
+                }}))
 
   # Keep only the feasible results
   resultsFeasible <- results[fInd]
@@ -348,9 +358,88 @@ checkInfeasibility <- function(results, k){
   return(list(fInd = fInd, results = resultsFeasible, k = feasibleK))
 }
 
-saveResults <- function(signals, results, p, n, elapsedTime) {
+# Fix singular matrices using nearPD (not used)
+fixInvertibility <- function(beta){
+
+  p <- sqrt(length(beta))
+  M <- matrix(beta, nrow = p)
+  E <- eigen(M)
+  if(all(abs(E$values)) < 1e-3){
+    print(TRUE)
+    if(all(E$values) >= 0){
+      M <- nearPD(M, base.matrix = TRUE, conv.tol = 1e-4)$mat
+    }else{
+      M <- -nearPD(-M, base.matrix = TRUE, conv.tol = 1e-4)$mat
+    }
+  }
+
+  return(c(M))
+}
+
+getPreSelectionMetrics <- function(signals, betas, p, n, methodDir) {
+
+  results <- list()
+
+  results$betas <- betas
+
+  # Compute metrics for only off-diagonal elements
+  diag <- seq(1, p ** 2, by = p + 1)
+  # Evaluate Metrics
+  results$max_acc <- mean(sapply(1:length(betas), function(x){
+    max(apply(betas[[x]], 2, function(y){
+      acc(y[-diag], signals[[x]]$gt[-diag])
+    }))
+  }))
+  results$max_f1 <- mean(sapply(1:length(betas), function(x){
+    max(apply(betas[[x]], 2, function(y){
+      score <- f1score(y[-diag], signals[[x]]$gt[-diag])
+      if (is.nan(score)) score <- 1
+      return(score)
+    }))
+  }))
+  results$tpr <- sapply(1:length(betas), function(x){
+    apply(betas[[x]], 2, function(y){
+      score <- tpr(y[-diag], signals[[x]]$gt[-diag])
+      if (is.nan(score)) score <- 1
+      return(score)
+    })
+  })
+  results$fpr <- sapply(1:length(betas), function(x){
+    apply(betas[[x]], 2, function(y){
+      score <- fpr(y[-diag], signals[[x]]$gt[-diag])
+      if (is.nan(score)) score <- 1
+      return(score)
+    })
+  })
+  results$precision <- sapply(1:length(betas), function(x){
+    apply(betas[[x]], 2, function(y){
+      score <- precision(y[-diag], signals[[x]]$gt[-diag])
+      if (is.nan(score)) score <- 1
+      return(score)
+    })
+  })
+
+  # Area under the Curve along the regularization path
+  results$aucroc <- mean(sapply(1:length(betas), function(x){
+    AUCROC_path(results$tpr[, x], results$fpr[, x])
+  }))
+  results$aucpr <- mean(sapply(1:length(betas), function(x){
+    AUCPR_path(results$precision[, x], results$tpr[, x])
+  }))
+
+  # Save the results
+    save(results,
+      file = paste0(getwd(), "/../Results/", methodDir, "/allModels_edgeProb5/", n, "_", p, "_res.RData"))
+}
+
+saveResults <- function(signals, results, p, n, elapsedTime, methodDir) {
 
       betas <- results
+
+      # Evaluate Pre model selection metrics
+      getPreSelectionMetrics(signals, betas, p, n, methodDir)
+
+      ## Model Selection
 
       # Choose the best drift matrix based on posterior model probabilities
       Siginv_comp <- lapply(1:length(betas), function(x) {
@@ -360,7 +449,7 @@ saveResults <- function(signals, results, p, n, elapsedTime) {
       # return(apply(betas[[x]], 2, lyap_bic, signals[[x]]$vecC, n))
       # })
       bic_scores <- lapply(1:length(betas), function(x) {
-        return(apply(Siginv_comp[[x]], 2, aic_score, signals[[x]]$Sigma, n))
+        return(apply(Siginv_comp[[x]], 2, bic_score, signals[[x]]$Sigma, signals[[x]]$n))
         }) 
       posterior_prob <- lapply(bic_scores, postprb)
       bestM <- lapply(1:length(betas), function(x) {
@@ -385,25 +474,31 @@ saveResults <- function(signals, results, p, n, elapsedTime) {
       return(bestResult)
 }
 
-getMetrics <- function(signals, bestResult, p, n){
+getMetrics <- function(signals, bestResult, p, n, method, methodDir){
+
+    # results <- recoverDriftMatrix(signals, p, method, k = lapply(bestResult, function(x){return(x$bestk)}))
 
     # Evaluate Metrics
     diag <- seq(1, p ** 2, by = p + 1)
     bestResult <- apply(as.matrix(1:length(signals)), 1,  function(x) {
-      bestResult[[x]]$acc <- acc(bestResult[[x]]$M_comp[-diag],
+      # Remove noise
+      bestResult[[x]]$M_noiseFree <- bestResult[[x]]$M_comp
+      # bestResult[[x]]$M_noiseFree[abs(bestResult[[x]]$M_noiseFree) < 1e-6] <- 0
+
+      bestResult[[x]]$acc <- acc(bestResult[[x]]$M_noiseFree[-diag],
         signals[[x]]$gt[-diag])
-      bestResult[[x]]$tpr <- tpr(bestResult[[x]]$M_comp[-diag],
+      bestResult[[x]]$tpr <- tpr(bestResult[[x]]$M_noiseFree[-diag],
         signals[[x]]$gt[-diag])
       if (is.nan(bestResult[[x]]$tpr)) bestResult[[x]]$tpr <- 1
-      bestResult[[x]]$fpr <- fpr(bestResult[[x]]$M_comp[-diag],
+      bestResult[[x]]$fpr <- fpr(bestResult[[x]]$M_noiseFree[-diag],
         signals[[x]]$gt[-diag])
       if (is.nan(bestResult[[x]]$fpr)) bestResult[[x]]$fpr <- 1
-      bestResult[[x]]$f1score <- f1score(bestResult[[x]]$M_comp[-diag],
+      bestResult[[x]]$f1score <- f1score(bestResult[[x]]$M_noiseFree[-diag],
         signals[[x]]$gt[-diag])
       if (is.nan(bestResult[[x]]$f1score)) bestResult[[x]]$f1score <- 1
-      bestResult[[x]]$aucroc <- AUCROC(bestResult[[x]]$M_comp[-diag],
+      bestResult[[x]]$aucroc <- AUCROC(bestResult[[x]]$M_noiseFree[-diag],
         signals[[x]]$gt[-diag])
-      bestResult[[x]]$aucpr <- AUCPR(bestResult[[x]]$M_comp[-diag],
+      bestResult[[x]]$aucpr <- AUCPR(bestResult[[x]]$M_noiseFree[-diag],
         signals[[x]]$gt[-diag])
       return(bestResult[[x]])
     })
@@ -421,7 +516,6 @@ getMetrics <- function(signals, bestResult, p, n){
 
     # Save the results
     save(bestResult,
-      file = paste0(getwd(), "/../Results/", "ResultsWithRegEdge",
-        "/completeResultsWithDiagMetric_edgeProb5/", n, "_", p, "_res.RData"))
+      file = paste0(getwd(), "/../Results/", methodDir, "/completeResultsWithDiagMetric_edgeProb5/", n, "_", p, "_res.RData"))
 
 }

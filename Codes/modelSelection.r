@@ -44,9 +44,9 @@ aic_score <- function(K, S, n) {
   if (is.matrix(K)){
     # do nothing
   }else{
-    K <- matrix(K,nrow = sqrt(length(K)))
+    K <- matrix(K, nrow = sqrt(length(K)))
   }
-  if (n==Inf) n <- 10^10
+  if (n == Inf) n <- 10^10
   aic <- n * (-determinant(K)$modulus + sum(diag(S %*% K))) + 2 * sum(unique(K)!=0)
 
   return(aic)
