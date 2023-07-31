@@ -1,0 +1,57 @@
+---
+title: "Arabidopsis_thaliana_description"
+output: html_document
+date: "2022-01-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Dataset description
+
+**Arabidopsis thaliana gene expression data set**
+
+
+### Description
+
+To gain more insight into the cross-talk between both pathways at the transcriptional level, gene-expression patterns were monitored under various experimental conditions using 118 GeneChip (Affymetrix) microarrays. To construct the genetic regulatory network, this dataset is focused on 40 genes, 16 of which were assigned to the cytosolic pathway, 19 to the plastidal pathway and five encode proteins located in the mitochondrion.
+
+#### Description of experimental conditions
+Experimental procedures involved seedlings, leaves and roots. For experiments involving seedlings or leaves,
+plants were grown in growth chambers at 70% humidity and daily cycles of 16 h light at 21◦C and 8 h
+darkness at 21◦C. Plant material from three independent experiments (replications not in parallel) for each
+experiment group respectively was pooled prior to RNA extraction. The 118 different experimental conditions are denoted by c1-c118:
+
+    c1-c2:
+    Experiment with wild-type and era mutant seedlings. (growth stage 1.0; tissue: whole seedlings).
+    c3-c5:
+    Arabidopsis tissue culture, leaf and seedling in a baseline experiment (see also [38]). (growth stage: - ; tissue:
+    tissue culture, seedling, adult leaf).
+    c6-c14:
+    RNA was extracted from seedlings and adult leaves of wild-type and prenylation mutant plants grown under
+    standard conditions (growth stage 1.0; tissue: whole seedlings and adult leaves).
+    c15-c22:
+    RNA was extracted from wild-type and several transgenic seedlings (growth stage: 1.0; tissue: whole seedlings).
+    c23-c30:
+    RNA was extracted from a root inducible system (see [39]) exposed to hormonal treatments. (growth stage: 1.0; tissue: lateral roots).
+    c31-c56:
+    Arabidopsis seedlings were exposed to light and dark conditions in a time-course experiment (0, 10 min, 1h, 5h, 2d, 5d). (growth stage: 1.0; tissue: whole seedlings).
+    c70-c92:
+    Experiment to assess the effect of inhibitors of the MVA pathway (lovastatin) and the MVA-independent pathway (fosmidomycin) on the expression of genes involved in isoprenoid biosynthesis. (growth stage: 1.0 and 3.90; tissues: whole seedlings and adult leaves).
+    c93-c118:
+    Arabidopsis seedlings and adult leaves were exposed to ozone for several periods of time. (growth stage: 1.0 and 3.90; tissues: whole seedlings, cauline leaves and adult leaves).
+
+
+### Sources 
+
+Wille, A., Zimmermann, P., Vranová, E. et al. Sparse graphical Gaussian modeling of the isoprenoid gene network in Arabidopsis thaliana. Genome Biol 5, R92 (2004). https://doi.org/10.1186/gb-2004-5-11-r92
+
+
+### Examples
+
+
+```{r}
+# use file Arabidopsis thaliana.R to load the data and run experiments.
+
+```
