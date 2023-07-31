@@ -1,4 +1,5 @@
 # Master-Thesis
+
 Learning Graphical Lyapunov models with best-subset selection methods
 
 Author: Rahul Radhakrishnan, Technical University of Munich, Germany
@@ -13,3 +14,4 @@ This work focuses on recovering the support of the drift matrix from the Lyapuno
 For the warm starts, four different initializations were explored: three variants of projected gradient descent solutions and direct lasso solutions ($\mathrm{BS_{lasso}}$). The projected gradient solutions achieve a $k-$sparse solution using marginal regression coefficients as initializations. Its variants differ in terms of the strategy used to supply these marginal regression coefficients to the algorithm as a starting point. In particular, one can directly choose the $k$ edges with largest coefficients ($\mathrm{BS_{reg}}$), choose only 1 edge ($\mathrm{BS_{1edge}}$), and choose edges based on sparsity pattern of the estimate of inverse covariance matrix ($\mathrm{BS_{glasso}}$). 
 
 All the initialization strategies are compared against each other and to the Direct Lyapunov Lasso on synthetic and real dataset.  Information criterion are used to select drift matrices that are best fitting to the observed data, while balancing the sparsity. The results show that lasso outperforms BS, provided there are enough samples. BS has the potential to perform better than lasso for low sample size, especially for large graph structures. One also finds in this study that lasso solutions seem to provide better bounds to the MIO formulation compared to projected gradient descent solutions. So $\mathrm{BS_{lasso}}$ performs as good as or better than the other BS methods. All the projected gradient descent based methods have similar performance, with $\mathrm{BS_{1edge}}$ and $\mathrm{BS_{glasso}}$ being marginally better. These comparisons are relative. It is shown that all the methods perform very poor beyond certain problem size and below a certain value of sample size.
+
