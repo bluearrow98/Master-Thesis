@@ -11,6 +11,7 @@ bic_score <- function(K, S, n){
   return(bic)
 }
 
+# BIC for Lyapunov equation (not used)
 lyap_bic <- function(M, C_true, n) {
   if (is.matrix(M) && is.matrix(C_true)){
     # do nothing
@@ -40,6 +41,7 @@ ebic_score <- function(K, S, n, gamma){
   return(ebic)
 }
 
+# Compute AIC
 aic_score <- function(K, S, n) {
   if (is.matrix(K)){
     # do nothing

@@ -6,10 +6,8 @@ library(dplyr)
 
 p <- c(5, 10, 15, 20, 25)
 n <- c(100, 200, 500, 1000, 5000, 10^4, 10^5, Inf)
-method <- list("ResultsLasso", "ResultsWithRegEdge", "ResultsWith1Edge",
-  "ResultsWithGlasso", "ResultsWithLassoIni")
-criteria <- "EBIC"
-d <- 25
+method <- list("ResultsLassoBIC", "ResultsWithRegEdgeBIC", "ResultsWith1EdgeBIC",
+  "ResultsWithGlassoBIC", "ResultsWithLassoIniBIC")
 data <- vector('list', length(method))
 
 # Colour blind friendly colours
@@ -21,13 +19,12 @@ for (i in p) {
     # Best subset results
     data[[j]] <- data.frame(n = n,
       bs = t(sapply(n, function(x){
-        load(paste0(getwd(), "/../Results/", method[[j]], criteria,
-          "/selectedResultsWithMetric_edgeProb",d, "/", x, "_", i, "_res.RData"))
-        return(c(bestResult$accAvg, bestResult$f1scoreAvg, bestResult$tprAvg,
-          bestResult$fprAvg, bestResult$aucprAvg, bestResult$aucrocAvg))})))
+        load(paste0(getwd(), "/../Results/", method[[j]], 
+          "/completeResults_edgeProb25/", x, "_", i, "_res.RData"))
+        return (c(results$max_acc, results$max_f1, results$aucroc, results$aucpr))})))
 
-    colnames(data[[j]]) <- c("n", "Acc Avg.", "F1 Score Avg.", "TPR Avg.", "FPR Avg.", "AUC PR Avg.",
-                        "AUC ROC Avg.")
+    colnames(data[[j]]) <- c("n", "Max. Acc", "Max. F1 Score", 
+        "AUC ROC", "AUC PR")
     data[[j]] <- melt(data[[j]],id.vars = "n", variable.name = "Metrics",value.name = "metrics")
 
   }
@@ -47,8 +44,8 @@ for (i in p) {
 
 
   dir = getwd()
-  # pdf(file = paste0(dir,"/../Results/Plots for Constant signal size/Comparison of initializations/",
-  #   "d", d, "/with", criteria, "/p", i, "_res.pdf"))
+  # pdf(file = paste0(dir,"/../Results/Plots for Constant signal size/MetricsAlongRegPath/d25/", 
+  #   "p",i,"_res.pdf"))
   print(p1)
   dev.off()
 }
