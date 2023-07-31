@@ -12,23 +12,19 @@ n <- c(100, 1000, 10000, 1e+05, Inf)
 cbbPalette <- c("#E69F00", "#000000", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
 
 # Collect results
-method <- list("ResultsLasso", "ResultsWithRegEdge", "ResultsWith1Edge", 
-                "ResultsWithGlasso", "ResultsWithLassoIni")
-criteria <- "EBIC"
-d <- 25
+method <- list("ResultsLassoBIC", "ResultsWithRegEdgeBIC", "ResultsWith1EdgeBIC", "ResultsWithGlassoBIC", "ResultsWithLassoIniBIC")
 data <- vector('list', length(method))
 
 for (j in n) {
   for (i in 1:length(method)) {
     data[[i]] <- data.frame(p = p,
-      t(sapply(p,function(x){
-        load(paste0(getwd(), "/../Results/", method[[i]], criteria, "/selectedResultsWithMetric_edgeProb",d,"/"
+      t(sapply(p, function(x){
+        load(paste0(getwd(), "/../Results/", method[[i]], "/completeResults_edgeProb25/"
             , j, "_", x, "_res.RData"))
 
-        return (c(bestResult$accAvg, bestResult$f1scoreAvg, bestResult$tprAvg,
-          bestResult$fprAvg, bestResult$aucprAvg, bestResult$aucrocAvg))})))
-    colnames(data[[i]]) <- c("p", "Acc Avg.", "F1 Score Avg.",
-      "TPR Avg.", "FPR Avg.", "AUC PR Avg.", "AUC ROC Avg.")
+        return (c(results$max_acc, results$max_f1, results$aucroc, results$aucpr))})))
+    colnames(data[[i]]) <- c("p", "Max. Acc", "Max. F1 Score", 
+        "AUC ROC", "AUC PR")
     data[[i]] <- melt(data[[i]], id.vars = "p", variable.name = "Metrics",
       value.name = "metrics")
   }
@@ -38,8 +34,8 @@ for (j in n) {
 
 
   dir = getwd()
-  # pdf(file = paste0(dir,"/../Results/Plots for Variable signal size/10 point grid/d", d, "/with",criteria,"/",
-  #   "n",j,"_res.pdf"))
+  # pdf(file = paste0(dir,"/../Results/Plots for Variable signal size/10 point grid/", 
+  #       "MetricsAlongRegPath/d25/n", j, "_res.pdf"))
   p1 <- ggplot(combineData)+
     geom_point(aes(x = as.character(p),y = metrics,group = Method,color = Method),size = 2) + 
     geom_line(aes(x = as.character(p),y = metrics,group = Method, color = Method),linewidth = 0.5) +
