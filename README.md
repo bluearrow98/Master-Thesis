@@ -1,2 +1,2 @@
 # Master-Thesis
-Best subset selection for the Graphical Lyapunov Models
+Learning graphical Lyapunov models using best-subset selection methods
