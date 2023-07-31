@@ -2,8 +2,10 @@
 
 Learning Graphical Lyapunov models with best-subset selection methods
 
-Author: Rahul Radhakrishnan, Technical University of Munich, Germany \\
-Supervisor: Dr. Mathias Drton, Department of Mathematical statistics, Technical University of Munich, Germany \\
+Author: Rahul Radhakrishnan, Technical University of Munich, Germany 
+
+Supervisor: Dr. Mathias Drton, Department of Mathematical statistics, Technical University of Munich, Germany
+
 Advisor: Msc. Philipp Dettling, Department of Mathematical statistics, Technical University of Munich, Germany
 
 ## Abstract
