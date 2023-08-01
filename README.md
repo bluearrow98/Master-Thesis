@@ -20,7 +20,7 @@ All the initialization strategies are compared against each other and to the Dir
 ## Code files (Instructions)
 Simulated data: 
 
-Run recoverLyapunovGraphs.R for generating signals and recover them. 
+Run recoverLyapunovGraphs.R for generating signals and recovering the drift matrix via best-subset selection (MIO approach) or lasso. 
 
 
 
