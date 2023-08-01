@@ -17,3 +17,11 @@ For the warm starts, four different initializations were explored: three variant
 
 All the initialization strategies are compared against each other and to the Direct Lyapunov Lasso on synthetic and real dataset.  Information criterion are used to select drift matrices that are best fitting to the observed data, while balancing the sparsity. The results show that lasso outperforms BS, provided there are enough samples. BS has the potential to perform better than lasso for low sample size, especially for large graph structures. One also finds in this study that lasso solutions seem to provide better bounds to the MIO formulation compared to projected gradient descent solutions. So $\mathrm{BS_{lasso}}$ performs as good as or better than the other BS methods. All the projected gradient descent based methods have similar performance, with $\mathrm{BS_{1edge}}$ and $\mathrm{BS_{glasso}}$ being marginally better. These comparisons are relative. It is shown that all the methods perform very poor beyond certain problem size and below a certain value of sample size.
 
+## Code files
+Simulated data: 
+
+Run recoverLyapunovGraphs.R for generating signals and recover them. 
+Isoprenoid data: 
+
+Run recoverPathway.R for loading the isoprenoid dataset and recover the support of the drift matrix (on the assumption that the volatility matrix is identity - Future works need to focus on joint estimation of M and C). 
+Data was obtained from: Wille, Anja, et al. "Sparse graphical Gaussian modeling of the isoprenoid gene network in Arabidopsis thaliana." Genome biology 5.11 (2004): 1-13.
