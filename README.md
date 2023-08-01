@@ -21,6 +21,8 @@ All the initialization strategies are compared against each other and to the Dir
 Simulated data: 
 
 Run recoverLyapunovGraphs.R for generating signals and recover them. 
+
+
 Isoprenoid data: 
 
 Run recoverPathway.R for loading the isoprenoid dataset and recover the support of the drift matrix (on the assumption that the volatility matrix is identity - Future works need to focus on joint estimation of M and C). 
