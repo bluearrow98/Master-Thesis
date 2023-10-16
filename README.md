@@ -1,5 +1,3 @@
-# Master-Thesis
-
 Learning Graphical Lyapunov models with best-subset selection methods
 
 Author: Rahul Radhakrishnan, Technical University of Munich, Germany 
